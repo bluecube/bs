@@ -9,9 +9,7 @@ from watchdog.events import FileSystemEventHandler
 def _synchronized(f):
     @functools.wraps(f)
     def wrapper(self, *args, **kwargs):
-        try:
-            _ = self._lock
-        except AttributeError:
+        if not hasattr(self, "_lock"):
             self._lock = threading.Lock()
 
         with self._lock:
@@ -42,7 +40,6 @@ class Monitor:
         hasher = hashlib.sha1()
         try:
             with path.open("rb") as fp:
-                print("Hashing", path)
                 while True:
                     block = fp.read(4096)
                     if len(block) == 0:
@@ -52,7 +49,6 @@ class Monitor:
 
             return hasher.digest()
         except OSError:
-            print(path, "doesn't exist")
             return None
 
     @_synchronized
@@ -94,27 +90,16 @@ class _EventHandler(FileSystemEventHandler):
     def __init__(self, monitor):
         self._monitor = monitor
 
-    def on_created(self, event):
+    def on_any_event(self, event):
         if event.is_directory:
             return
         self._monitor._examine_path(event.src_path)
-
-    def on_deleted(self, event):
-        if event.is_directory:
-            return
-        self._monitor._examine_path(event.src_path)
-
-    def on_modified(self, event):
-        if event.is_directory:
-            return
-        self._monitor._examine_path(event.src_path)
-
-    def on_moved(self, event):
-        if event.is_directory:
-            return
-        self._monitor._examine_path(event.src_path)
-        self._monitor._examine_path(event.desct_path)
-
+        try:
+            dest_path = event.dest_path
+        except AttributeError:
+            print("attr error")
+        else:
+            self._monitor._examine_path(dest_path)
 
 with Monitor() as m:
     m.watch("/home/cube/Factorio/src", True)
