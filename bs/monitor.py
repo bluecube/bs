@@ -1,5 +1,6 @@
+import util
+
 import pathlib
-import hashlib
 import threading
 import functools
 import os
@@ -25,8 +26,6 @@ class Monitor:
         self._old_state = {}
         self._changed = {}
 
-        lock = threading.Lock()
-
     def __enter__(self):
         self._observer.start()
         return self
@@ -35,26 +34,14 @@ class Monitor:
         self._observer.stop()
         self._observer.join()
 
-    @staticmethod
-    def _get_hash(path):
-        hasher = hashlib.sha1()
-        try:
-            with path.open("rb") as fp:
-                while True:
-                    block = fp.read(4096)
-                    if len(block) == 0:
-                        break
-                    else:
-                        hasher.update(block)
-
-            return hasher.digest()
-        except OSError:
-            return None
-
     @_synchronized
     def _examine_path(self, path):
-        path = pathlib.Path(path).resolve()
-        hash = self._get_hash(path)
+        try:
+            path = pathlib.Path(path).resolve()
+        except FileNotFoundError:
+            hash = None
+        else:
+            hash = util.sha1_file(path)
 
         if hash == self._old_state.get(path, None):
             if path in self._changed:
@@ -69,12 +56,12 @@ class Monitor:
         path = pathlib.Path(path).resolve()
 
         if not recursive:
-            self._old_state[path] = self._get_hash(path)
+            self._old_state[path] = util.sha1_file(path)
         else:
             for (dirpath, dirnames, filenames) in os.walk(str(path)):
                 for filename in filenames:
                     fullpath = pathlib.Path(dirpath) / filename
-                    self._old_state[fullpath] = self._get_hash(fullpath)
+                    self._old_state[fullpath] = util.sha1_file(fullpath)
 
     @_synchronized
     def update(self):
@@ -97,7 +84,7 @@ class _EventHandler(FileSystemEventHandler):
         try:
             dest_path = event.dest_path
         except AttributeError:
-            print("attr error")
+            pass
         else:
             self._monitor._examine_path(dest_path)
 
