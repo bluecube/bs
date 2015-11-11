@@ -32,16 +32,3 @@ def sha1_file(path):
     with mmap_file(path) as mm:
         hasher.update(mm)
     return hasher.digest()
-
-# This version is simpler, but consistently slower by about 25%
-#def sha1_file(path, blocksize=4096):
-#    hasher = hashlib.sha1()
-#    with path.open("rb") as fp:
-#        while True:
-#            block = fp.read(4096)
-#            if len(block) == 0:
-#                break
-#            else:
-#                hasher.update(block)
-#
-#    return hasher.digest()
