@@ -22,7 +22,7 @@ def sha1_iterable(*iterables):
             try:
                 hasher.update(item)
             except TypeError:
-                hasher.update(str(item).encode("utf-8"))
+                hasher.update(repr(item).encode("utf8"))
             hasher.update(b"\0")
     return hasher.digest()
 

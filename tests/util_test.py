@@ -22,6 +22,7 @@ def sha1_iterable_test():
         nonlocal hashes
         h = bs.util.sha1_iterable(*args)
         assert h not in hashes
+        hashes.add(h)
 
     list1 = [1, "a", b"b"]
     list2 = list(range(5))
@@ -32,5 +33,8 @@ def sha1_iterable_test():
     check_unique(list1 + ["a"])
     check_unique(iter(list2))
     check_unique(list1, list2)
+    check_unique([None])
+    check_unique(["None"])
+    check_unique(map(str, list2))
 
     eq_(bs.util.sha1_iterable(list1, list2), bs.util.sha1_iterable(list1 + list2))
