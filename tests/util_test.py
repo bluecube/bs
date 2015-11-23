@@ -38,3 +38,10 @@ def sha1_iterable_test():
     check_unique(map(str, list2))
 
     eq_(bs.util.sha1_iterable(list1, list2), bs.util.sha1_iterable(list1 + list2))
+
+def maybe_iterable_test():
+    assert_sequence_equal(bs.util.maybe_iterable("a"), ["a"])
+    assert_sequence_equal(bs.util.maybe_iterable(b"a"), [b"a"])
+    assert_sequence_equal(bs.util.maybe_iterable([1]), [1])
+    assert_sequence_equal(bs.util.maybe_iterable(range(3)), [0, 1, 2])
+    assert_sequence_equal(bs.util.maybe_iterable(1), [1])

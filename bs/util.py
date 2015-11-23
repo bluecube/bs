@@ -32,3 +32,14 @@ def sha1_file(path):
     with mmap_file(path) as mm:
         hasher.update(mm)
     return hasher.digest()
+
+def maybe_iterable(val):
+    if isinstance(val, str) or isinstance(val, bytes):
+        return [val]
+
+    try:
+        iter(val)
+    except:
+        return [val]
+    else:
+        return val
