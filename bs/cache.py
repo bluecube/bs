@@ -20,12 +20,12 @@ class Cache:
 
     def clear(self):
         self.size_used = 0
-        self.data = collections.OrderedDict()
+        self._data = collections.OrderedDict()
             # MRU order
             # Key: full hash of application
             # Value: _Item
 
-        self.possible_hashes = {}
+        self._partial_hashes = {}
             # Key: Partial hash
             # Value: list of full hashes
 
@@ -38,13 +38,13 @@ class Cache:
         """ Add files to cache.
         Moves the paths to the correct directory in cache. """
 
-        assert final_hash not in self.data
-        assert final_hash not in self.possible_hashes.get(partial_hash, [])
+        assert final_hash not in self._data
+        assert final_hash not in self._partial_hashes.get(partial_hash, [])
 
         size = sum(path.stat().st_size for path in paths)
 
-        self.data[final_hash] = _Item(size, partial_hash, implicit_dependencies)
-        self.possible_hashes.setdefault(partial_hash, []).append(final_hash)
+        self._data[final_hash] = _Item(size, partial_hash, implicit_dependencies)
+        self._partial_hashes.setdefault(partial_hash, []).append(final_hash)
 
         self._reserve_space(size)
 
@@ -59,28 +59,28 @@ class Cache:
     def get_candidate_implicit_dependencies(self, partial_hash):
         """ Return list of possible implicit dependencies. """
         try:
-            candidate_hashes = self.possible_hashes[partial_hash]
+            candidate_hashes = self._partial_hashes[partial_hash]
         except KeyError:
             return []
 
-        return [self.data[h].implicit_dependencies for h in candidate_hashes]
+        return [self._data[h].implicit_dependencies for h in candidate_hashes]
 
     def hit(self, final_hash):
-        assert final_hash in self.data
-        self.data.move_to_end(final_hash)
+        assert final_hash in self._data
+        self._data.move_to_end(final_hash)
 
     def _reserve_space(self, size):
         """ Make sure there is at least size space in the cache available """
         while self.size_used + size > self.size_limit:
-            if not len(self.data):
+            if not len(self._data):
                 raise RuntimeError("The cache is too small")
             self._discard_one()
 
     def _discard_one(self):
-        final_hash, item = self.data.popitem(last=False)
-        self.possible_hashes[item.partial_hash].remove(final_hash)
-        if not self.possible_hashes[item.partial_hash]:
-            del self.possible_hashes[item.partial_hash]
+        final_hash, item = self._data.popitem(last=False)
+        self._partial_hashes[item.partial_hash].remove(final_hash)
+        if not self._partial_hashes[item.partial_hash]:
+            del self._partial_hashes[item.partial_hash]
 
         shutil.rmtree(str(self.get_directory(final_hash)))
         self.size_used -= item.size
@@ -93,7 +93,7 @@ class Cache:
 
     def save(self):
         """ Save cache metadata to a file in the cache directory. """
-        if len(self.data) == 0:
+        if len(self._data) == 0:
             # There is no point in saving empty cache and we could get an error
             # because of nonexistent cache directory
             return
@@ -102,8 +102,8 @@ class Cache:
             pickler = pickle.Pickler(fp)
             pickler.dump(1), # Version
             pickler.dump(self.size_used)
-            pickler.dump(self.data)
-            pickler.dump(self.possible_hashes)
+            pickler.dump(self._data)
+            pickler.dump(self._partial_hashes)
 
     def _load(self):
         """ Try to load metadata from a file in the cache directory.
@@ -119,8 +119,8 @@ class Cache:
                 unpickler = pickle.Unpickler(fp)
                 version = unpickler.load()
                 self.size_used = unpickler.load()
-                self.data = unpickler.load()
-                self.possible_hashes = unpickler.load()
+                self._data = unpickler.load()
+                self._partial_hashes = unpickler.load()
             except pickle.PickleError:
                 return False
             finally:
@@ -132,7 +132,7 @@ class Cache:
         """ Verifies the internal state invariants, returns True if state is valid. """
 
         accessible_full_hashes = {}
-        for partial_hash, full_hashes in self.possible_hashes.items():
+        for partial_hash, full_hashes in self._partial_hashes.items():
             if not full_hashes:
                 #print(1)
                 return False # Every partial hash stored needs at least one corresponding full hash
@@ -143,7 +143,7 @@ class Cache:
 
             for full_hash in full_hashes:
                 try:
-                    if self.data[full_hash].partial_hash != partial_hash:
+                    if self._data[full_hash].partial_hash != partial_hash:
                         #print(3)
                         return False # If a partial hash is linking to a full hash, it must link back
                 except KeyError:
@@ -153,7 +153,7 @@ class Cache:
                 accessible_full_hashes[full_hash] = partial_hash
 
         owned_directories = set()
-        for full_hash, item in self.data.items():
+        for full_hash, item in self._data.items():
             if full_hash not in accessible_full_hashes:
                 #print(5)
                 return False # Every full hash has at least one partial hash pointing to it

@@ -175,31 +175,31 @@ def verify_state_test():
     """ Tests all failure states of state verification. """
     with cache_fixture() as c:
         create_data(c)
-        c.possible_hashes[b"x"] = []
+        c._partial_hashes[b"x"] = []
         assert not c.verify_state() # 1
         c.clear()
 
     with cache_fixture() as c:
         create_data(c)
-        c.possible_hashes[b"partial-1"].append(b"final-1-a")
+        c._partial_hashes[b"partial-1"].append(b"final-1-a")
         assert not c.verify_state() # 2
         c.clear()
 
     with cache_fixture() as c:
         create_data(c)
-        c.data[b"final-1-a"] = c.data[b"final-1-a"]._replace(partial_hash=b"xxx")
+        c._data[b"final-1-a"] = c._data[b"final-1-a"]._replace(partial_hash=b"xxx")
         assert not c.verify_state() # 3
         c.clear()
 
     with cache_fixture() as c:
         create_data(c)
-        del c.data[b"final-1-a"]
+        del c._data[b"final-1-a"]
         assert not c.verify_state() # 4
         c.clear()
 
     with cache_fixture() as c:
         create_data(c)
-        c.data[b"x"] = cache._Item(0, b"y", [])
+        c._data[b"x"] = cache._Item(0, b"y", [])
         assert not c.verify_state() # 5
         c.clear()
 
