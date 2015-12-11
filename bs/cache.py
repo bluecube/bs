@@ -1,25 +1,38 @@
 import binascii
 import collections
 import shutil
+import pickle
+
+_Item = collections.namedtuple("_Item", "size partial_hash implicit_dependencies")
 
 class Cache:
     """ Caches all output files of a single application + its computed implicit
     dependencies. """
 
-    Item = collections.namedtuple("Item", "size partial_hash implicit_dependencies")
+    _save_filename = "metadata.pickle"
 
     def __init__(self, directory, size_limit = 1000000000):
         self.directory = directory
+        self.size_limit = float("inf") # Size limit is infinite for loading
+        if not self._load():
+            self.clear()
         self.size_limit = size_limit
+
+    def clear(self):
         self.size_used = 0
         self.data = collections.OrderedDict()
             # MRU order
             # Key: full hash of application
-            # Value: Item
+            # Value: _Item
 
         self.possible_hashes = {}
             # Key: Partial hash
             # Value: list of full hashes
+
+        try:
+            shutil.rmtree(str(self.directory))
+        except FileNotFoundError:
+            pass
 
     def put(self, final_hash, partial_hash, paths, implicit_dependencies):
         """ Add files to cache.
@@ -30,7 +43,7 @@ class Cache:
 
         size = sum(path.stat().st_size for path in paths)
 
-        self.data[final_hash] = self.Item(size, partial_hash, implicit_dependencies)
+        self.data[final_hash] = _Item(size, partial_hash, implicit_dependencies)
         self.possible_hashes.setdefault(partial_hash, []).append(final_hash)
 
         self._reserve_space(size)
@@ -66,6 +79,8 @@ class Cache:
     def _discard_one(self):
         final_hash, item = self.data.popitem(last=False)
         self.possible_hashes[item.partial_hash].remove(final_hash)
+        if not self.possible_hashes[item.partial_hash]:
+            del self.possible_hashes[item.partial_hash]
 
         shutil.rmtree(str(self.get_directory(final_hash)))
         self.size_used -= item.size
@@ -75,3 +90,111 @@ class Cache:
         # I don't think that separating the hash by the first byte is strictly necessary,
         # but hey, git does it too :-)
         return self.directory / h[:2] / h[2:]
+
+    def save(self):
+        """ Save cache metadata to a file in the cache directory. """
+        if len(self.data) == 0:
+            # There is no point in saving empty cache and we could get an error
+            # because of nonexistent cache directory
+            return
+
+        with (self.directory / self._save_filename).open("wb") as fp:
+            pickler = pickle.Pickler(fp)
+            pickler.dump(1), # Version
+            pickler.dump(self.size_used)
+            pickler.dump(self.data)
+            pickler.dump(self.possible_hashes)
+
+    def _load(self):
+        """ Try to load metadata from a file in the cache directory.
+        Returns true if the load succeeded. """
+        save_path = self.directory / self._save_filename
+        try:
+            fp = save_path.open("rb")
+        except FileNotFoundError:
+            return False
+
+        with fp:
+            try:
+                unpickler = pickle.Unpickler(fp)
+                version = unpickler.load()
+                self.size_used = unpickler.load()
+                self.data = unpickler.load()
+                self.possible_hashes = unpickler.load()
+            except pickle.PickleError:
+                return False
+            finally:
+                save_path.unlink()
+
+        return self.verify_state()
+
+    def verify_state(self):
+        """ Verifies the internal state invariants, returns True if state is valid. """
+
+        accessible_full_hashes = {}
+        for partial_hash, full_hashes in self.possible_hashes.items():
+            if not full_hashes:
+                #print(1)
+                return False # Every partial hash stored needs at least one corresponding full hash
+
+            if len(full_hashes) != len(set(full_hashes)):
+                #print(2)
+                return False # There can't be any duplicities in links from partial to full hashes
+
+            for full_hash in full_hashes:
+                try:
+                    if self.data[full_hash].partial_hash != partial_hash:
+                        #print(3)
+                        return False # If a partial hash is linking to a full hash, it must link back
+                except KeyError:
+                    #print(4)
+                    return False # There must be a corresponding full hash record if a partial hash links to it
+
+                accessible_full_hashes[full_hash] = partial_hash
+
+        owned_directories = set()
+        for full_hash, item in self.data.items():
+            if full_hash not in accessible_full_hashes:
+                #print(5)
+                return False # Every full hash has at least one partial hash pointing to it
+
+            owned_directories.add(self.get_directory(full_hash))
+
+        def check_paths(root, in_cache):
+            if root in owned_directories:
+                in_cache = True
+
+            have_subdir = False
+            size = 0
+
+            for p in root.iterdir():
+                if p.is_dir():
+                    child_valid, child_size = check_paths(p, in_cache)
+                    if not child_valid:
+                        return False, 0
+                    size += child_size
+                    have_subdir = True
+                elif in_cache:
+                    size += p.stat().st_size
+                else:
+                    return False, 0
+
+            return (in_cache or have_subdir), size
+
+        if self.directory.exists():
+            valid, size = check_paths(self.directory, False)
+            if not valid:
+                #print(6)
+                return False # Invalid file or directory encounted
+        else:
+            size = 0
+
+        if size != self.size_used:
+            #print(7)
+            return False # Calculated size must be equal to real file size
+
+        if size > self.size_limit:
+            #print(8)
+            return False # Size exceeds the size limit
+
+        return True
