@@ -10,9 +10,6 @@ from watchdog.events import FileSystemEventHandler
 def _synchronized(f):
     @functools.wraps(f)
     def wrapper(self, *args, **kwargs):
-        if not hasattr(self, "_lock"):
-            self._lock = threading.Lock()
-
         with self._lock:
             return f(self, *args, **kwargs)
     return wrapper

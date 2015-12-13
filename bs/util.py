@@ -1,6 +1,7 @@
 import hashlib
 import mmap
 import contextlib
+import time
 
 @contextlib.contextmanager
 def mmap_file(path):
@@ -43,3 +44,21 @@ def maybe_iterable(val):
         return [val]
     else:
         return val
+
+class Timer:
+    def __init__(self, ewma_smoothing = 0.5, include_exceptions = False):
+        self.time = None
+        self._start_time = None
+        self._smoothing = ewma_smoothing
+        self._include_exceptions = include_exceptions
+
+    def __enter__(self):
+        self._start_time = time.perf_counter()
+
+    def __exit__(self, ex_type, ex_val, ex_tb):
+        if ex_type is None or self._include_exceptions:
+            elapsed = time.perf_counter() - self._start_time
+            if self.time is None:
+                self.time = elapsed
+            else:
+                self.time = self._smoothing * self.time + (1 - self._smoothing) * elapsed
