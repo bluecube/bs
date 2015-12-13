@@ -49,6 +49,9 @@ class Context:
     def clean_build(self):
         """ Build targets, don't assume any files exist. """
 
+        with open("/tmp/nodes.dot", "w") as fp:
+            self.dump_graph(fp)
+
         traversal.update(self._targets, self._files.values(), 1)
 
     def run_command(self, command):
@@ -58,6 +61,24 @@ class Context:
         return subprocess.check_output(command,
                                        stderr=sys.stderr,
                                        universal_newline=True)
+
+    def dump_graph(self, fp):
+        to_process = list(self._targets)[:]
+        nodes = set(to_process)
+
+        fp.write("digraph Nodes{")
+
+        while to_process:
+            node = to_process.pop()
+            for dep in node.dependencies:
+                fp.write("{} -> {};".format(id(dep), id(node)))
+                if dep not in nodes:
+                    nodes.add(dep)
+                    to_process.append(dep)
+
+        for node in nodes:
+            fp.write('{}[label="{}"];'.format(id(node), str(node)))
+        fp.write("}")
 
     @contextlib.contextmanager
     def tempfile(self, filenames):
