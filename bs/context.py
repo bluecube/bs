@@ -3,6 +3,9 @@ import tempfile
 import collections
 import pathlib
 import shutil
+import os
+import subprocess
+import sys
 
 from . import nodes
 from . import cache
@@ -23,6 +26,7 @@ class Context:
         self._dirty = set()
 
     def file_by_path(self, path):
+        path = pathlib.Path(path)
         if path not in self._files:
             self._files[path] = nodes.SourceFile(self, path)
         return self._files[path]
@@ -55,12 +59,13 @@ class Context:
         traversal.update(self._targets, self._files.values(), 1)
 
     def run_command(self, command):
+        command = [str(x) for x in command]
         if self.verbose:
             print(command)
 
         return subprocess.check_output(command,
                                        stderr=sys.stderr,
-                                       universal_newline=True)
+                                       universal_newlines=True)
 
     def dump_graph(self, fp):
         to_process = list(self._targets)[:]
@@ -81,7 +86,7 @@ class Context:
         fp.write("}")
 
     @contextlib.contextmanager
-    def tempfile(self, filenames):
+    def tempfile(self, filename=""):
         """ Context manager returning a path to a temporary file in the build directory.
         The file is created and immediately closed, so that it can be used by other
         process on windows. The file is deleted when the context manager ends. """
@@ -90,7 +95,13 @@ class Context:
             self.temp_directory.mkdir(parents=True)
         except FileExistsError:
             pass
-        fd, path = tempfile.mkstemp(prefix="", suffix="." + filename,
+
+        if len(filename):
+            suffix = "." + filename
+        else:
+            suffix = ""
+
+        fd, path = tempfile.mkstemp(prefix="", suffix=suffix,
                                     dir=str(self.temp_directory))
         os.close(fd)
         path = pathlib.Path(path)

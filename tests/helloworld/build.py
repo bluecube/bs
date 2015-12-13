@@ -49,7 +49,7 @@ with bs.Bs() as builder:
     greet_generator = ConcatenateGenerator(builder, "fun");
     generated_h, generated_c = builder.apply(greet_generator,
                                              builder.root.glob("*.txt"),
-                                             ["generated.h", None])
+                                             ["generated.h", "generated.c"])
 
     compiler = bs.gcc.GccCompiler(builder);
     compiler.add_dependency(generated_h)

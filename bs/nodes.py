@@ -10,7 +10,6 @@ class Node:
         except AttributeError:
             self.context = context
 
-        self.context = context
         self.dependencies = set()
         self.reverse_dependencies = set()
         self.targets = set()
@@ -128,14 +127,15 @@ class Application(Node):
         self.implicit_dependencies = nodes
         if nodes is not None:
             for node in nodes:
-                self.add_dependency(node)
+                if node not in self.dependencies:
+                    self.add_dependency(node)
 
     def update(self):
         if self._find_cached_implicit_dependencies():
             print("Have cached resutls", str(self))
             return
 
-        print("Building", str(self))
+        #print("Building", str(self))
         with self.context.tempdir() as temp, \
              self.timer:
 
@@ -143,6 +143,8 @@ class Application(Node):
             output_paths = [temp/output.name for output in self.outputs]
 
             computed_deps = self.builder.build(input_paths, output_paths)
+            if computed_deps is None:
+                computed_deps = []
 
             self._set_implicit_dependencies([self.context.file_by_path(p) for p in computed_deps])
 
@@ -217,13 +219,13 @@ class GeneratedFile(File):
         self.add_dependency(application)
 
     def get_path(self):
-        self.context.cache.get_directory(self.application.get_hash()) / self.name
+        return self.context.cache.get_directory(self.application.get_hash()) / self.name
 
     def get_hash(self):
         return self.hash_helper([self.application.get_hash(), self.index, self.name])
 
     def accessed(self):
-        self.application.hit()
+        self.application.accessed()
 
     def __str__(self):
         return self.str_helper(self.application.builder.__class__.__name__,
