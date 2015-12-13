@@ -107,7 +107,7 @@ def dropping_test():
                       i) # It's slightly hacky to add just an integer instead of the list of dependencies, but the cache shouldn't care
 
         eq_(set(c.get_candidate_implicit_dependencies(b"partial")), set(range(5)))
-        c.hit(b"final-0")
+        c.accessed(b"final-0")
         eq_(set(c.get_candidate_implicit_dependencies(b"partial")), set(range(5)))
 
         for i in range(5, 9):

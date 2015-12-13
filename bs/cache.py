@@ -65,7 +65,7 @@ class Cache:
 
         return [self._data[h].implicit_dependencies for h in candidate_hashes]
 
-    def hit(self, final_hash):
+    def accessed(self, final_hash):
         assert final_hash in self._data
         self._data.move_to_end(final_hash)
 
