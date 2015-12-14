@@ -60,6 +60,9 @@ class Context:
 
         self._link_targets(self._targets)
 
+    def save(self):
+        self.cache.save()
+
     def _link_targets(self, targets):
         """ Link the specified target files to the output directory. """
         try:

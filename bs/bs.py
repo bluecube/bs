@@ -38,6 +38,7 @@ class Bs:
 
         self._context.prepare_build()
         self._context.clean_build()
+        self._context.save()
 
     def apply(self, builder, inputs, output_names = None):
         application = nodes.Application(self._context, builder, inputs, output_names)
