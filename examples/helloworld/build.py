@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import sys
-sys.path.append("../../") # To find the bs import on the next line
+sys.path.append("..") # To find the bs import on the next line
 import bs
 
 class ConcatenateGenerator(bs.Builder):
