@@ -58,6 +58,44 @@ class Context:
 
         traversal.update(self._targets, self._files.values(), 1)
 
+        self._link_targets(self._targets)
+
+    def _link_targets(self, targets):
+        """ Link the specified target files to the output directory. """
+        try:
+            self.output_directory.mkdir(parents=True)
+        except FileExistsError:
+            pass
+
+        try:
+            relative_output_directory = self.output_directory.relative_to(self.build_directory)
+        except ValueError:
+            relative_build_directory = None
+        else:
+            relative_build_directory = pathlib.Path("..")
+            for _ in relative_output_directory.parts[1:]:
+                relative_build_directory = relative_build_directory / ".."
+
+        for target in targets:
+            cached_path = target.get_path()
+            output_file = self.output_directory / target.name
+
+            if output_file.exists() or output_file.is_symlink():
+                output_file.unlink()
+
+            symlink_path = cached_path.resolve() # Fallback if relatie paths can't be used
+            try:
+                relative_cached_file = cached_path.relative_to(self.build_directory)
+            except ValueError:
+                pass
+            else:
+                if relative_build_directory is not None:
+                    symlink_path = relative_build_directory / relative_cached_file
+
+            print("Symlinking", symlink_path, "to", output_file)
+
+            output_file.symlink_to(symlink_path)
+
     def run_command(self, command):
         command = [str(x) for x in command]
         if self.verbose:

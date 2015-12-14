@@ -26,7 +26,7 @@ class Bs:
         if output_directory is not None:
             self.output_directory = pathlib.Path(output_directory)
         else:
-            self.output_directory = self.root / "output"
+            self.output_directory = self.build_directory / "output"
 
     def __enter__(self):
         self._context = context.Context(self.build_directory, self.output_directory)
