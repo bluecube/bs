@@ -1,33 +1,27 @@
 import json
-import multiprocessing
 import os
 import sys
-import xmlrpc.server
+import pickle
 import time
 import threading
+import multiprocessing
+import socket
+import socketserver
+import logging
+
+logger = logging.getLogger(__name__)
 
 class Service:
     """ Base class for a service that runs as a background process and makes all
-    of its non underscore methods other than `connect` available using XMLRPC interface.
+    of its non underscore methods available using pickle-over-socket RPC interface.
     A service is identified by a simple json file that contains its PID and
-    port number. """
+    port number.
 
-    @classmethod
-    def connect(cls, control_file):
-        """ Connect to the service, start it if not already running.
-        Returns proxy for the service. """
-
-        ret = _try_connect(control_file, 0.5)
-        if not ret:
-            process = multiprocessing.Process(target=_run, args=(cls, control_file))
-            process.start()
-            # The process will fork and exit, we can join it immediately
-            process.join()
-            ret = _try_connect(control_file, 1.5)
-            if not ret:
-                raise Exception("Failed to start the service")
-
-        return ret
+    Instance variables:
+    _server -- SocketServer subclass that handles the connection
+    _lock -- Lock that protects all method calls.
+    _client_address -- (ip, port) tuple of client that calls the current function
+    """
 
     def __init__(self, control_file):
         """ Initialize the server of this service.
@@ -39,31 +33,114 @@ class Service:
         # Starts the thread that only stops the server and immediately exits
         threading.Thread(target=self._server.shutdown).start()
 
-    def _dispatch(self, method, params):
-        if method.startswith("_"):
-            raise NameError("Underscore names are not forwarded from service")
 
-        return getattr(self, method)(*params)
+class ServiceProxy:
+    def __init__(self, cls, control_file):
+        self._cls = cls
+        self._control_file = control_file
+        self._socket = None
+        self._rfile = None
+        self._wfile = None
 
+    def __enter__(self):
+        """ Connect to the service, start it if not already running.
+        Returns proxy for the service. """
 
-def _try_connect(control_file, timeout):
-    end_time = time.time() + timeout
-    while True:
         try:
-            with control_file.open("r") as fp:
-                loaded = json.load(fp)
-        except FileNotFoundError:
-            pass
-        except ValueError as e:
-            pass
-        else:
-            proxy = xmlrpc.client.ServerProxy("http://localhost:{}".format(loaded["port"]))
-            return proxy
+            self._try_connect(0.5)
+            if self._socket is None:
+                logger.info("Starting service %s with control file %s",
+                            self._cls.__name__,
+                            self._control_file)
+                process = multiprocessing.Process(target=_run, args=(self._cls,
+                                                                     self._control_file))
+                process.start()
+                # The process will fork and exit, we can join it immediately
+                process.join()
+                self._try_connect(1.5)
+                if self._socket is None:
+                    raise Exception("Failed to start the service")
 
-        time.sleep(0.1)
+            return self
+        except:
+            self._close()
+            raise
 
-        if time.time() > end_time:
-            return False
+    def __exit__(self, *ex):
+        self._close()
+
+    def __getattr__(self, name):
+        def func(*args, **kwargs):
+            pickle.dump((name, args, kwargs), self._wfile)
+            result, exc_info = pickle.load(self._rfile)
+            if exc_info is None:
+                return result
+            else:
+                raise exc_info[1]
+
+        return func
+
+    def _open(self, port):
+        self._socket = socket.create_connection(("localhost", port))
+        self._rfile = self._socket.makefile("rb", -1)
+        self._wfile = self._socket.makefile("wb", 0)
+
+    def _close(self):
+        if self._wfile:
+            self._wfile.close()
+        if self._rfile:
+            self._rfile.close()
+        if self._socket:
+            self._socket.close()
+
+    def _try_connect(self, timeout):
+        end_time = time.time() + timeout
+        while True:
+            try:
+                with self._control_file.open("r") as fp:
+                    loaded = json.load(fp)
+            except FileNotFoundError:
+                pass
+            except ValueError as e:
+                pass
+            else:
+                self._open(loaded["port"])
+
+            time.sleep(0.1)
+
+            if time.time() > end_time:
+                return
+
+class _PickleRPCServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+    def __init__(self, address, instance):
+        self.instance = instance
+        super().__init__(address, _PickleRPCRequestHandler)
+
+class _PickleRPCRequestHandler(socketserver.StreamRequestHandler):
+    def handle(self):
+        while True:
+            try:
+                func_name, args, kwargs = pickle.load(self.rfile)
+            except EOFError:
+                break
+
+            try:
+                if func_name.startswith("_"):
+                    raise NameError("Underscore names are not forwarded from service")
+
+                func = getattr(self.server.instance, func_name)
+                with self.server.instance._lock:
+                    self.server.instance._client_address = self.client_address
+                    result = func(*args, **kwargs)
+            except:
+                ex_type, ex_value, ex_tb = sys.exc_info()
+                pickle.dump((None, (ex_type, ex_value, None)), self.wfile)
+                # TODO: Pass traceback for exceptions as well
+            else:
+                pickle.dump((result, None), self.wfile)
 
 def _run(cls, control_file):
     """ The actual code run by the service.
@@ -75,8 +152,8 @@ def _run(cls, control_file):
         with control_file.open("w") as fp:
             instance = cls(control_file)
 
-            instance._server = xmlrpc.server.SimpleXMLRPCServer(("localhost", 0), allow_none=True)
-            instance._server.register_instance(instance)
+            instance._server = _PickleRPCServer(("localhost", 0), instance)
+            instance._lock = threading.Lock()
 
             json.dump({"pid": os.getpid(),
                        "port": instance._server.socket.getsockname()[1]},

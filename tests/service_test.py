@@ -14,7 +14,7 @@ class S(service.Service):
         self._value = 0
 
     def get_control_file(self):
-        return str(self._control_file)
+        return self._control_file
 
     def get_pid(self):
         return os.getpid()
@@ -28,14 +28,15 @@ class S(service.Service):
     def get_value(self):
         return self._value
 
+    def exception(self):
+        raise Exception("Test exception")
+
 @nottest
 @contextlib.contextmanager
-def connection_helper(control_file):
-    connection  = S.connect(control_file)
-
+def connection_helper(connection):
     pid = connection.get_pid()
-    assert pid != os.getpid()
     try:
+        assert pid != os.getpid()
         yield connection
     finally:
         try:
@@ -48,51 +49,61 @@ def basic_test():
     with contextlib.ExitStack() as stack:
         tmp = pathlib.Path(stack.enter_context(tempfile.TemporaryDirectory()))
 
+
         control_file1 = tmp / "ctrl1"
-
         assert not control_file1.exists()
 
-        s1a = stack.enter_context(connection_helper(control_file1))
-        eq_(s1a.get_control_file(), str(control_file1))
-        assert s1a.get_pid() != os.getpid()
-        s1a.set_value(5)
+        print("Opening service proxy s1a")
+        with service.ServiceProxy(S, control_file1) as s1a:
+            stack.enter_context(connection_helper(s1a))
+            eq_(s1a.get_control_file(), control_file1)
+            assert s1a.get_pid() != os.getpid()
+            s1a.set_value(5)
 
-        s1b = stack.enter_context(connection_helper(control_file1))
-        eq_(s1b.get_control_file(), str(control_file1))
-        assert s1a.get_pid() != os.getpid()
-        eq_(s1a.get_pid(), s1b.get_pid())
-        eq_(s1b.get_value(), 5)
+            with assert_raises(Exception):
+                try:
+                    s1a.exception()
+                except Exception as e:
+                    print(e)
+                    raise
 
-        control_file2 = tmp / "ctrl2"
-        s2 = stack.enter_context(connection_helper(control_file2))
-        eq_(s2.get_control_file(), str(control_file2))
-        assert s2.get_pid() != os.getpid()
-        assert s2.get_pid() != s1a.get_pid()
-        s2.set_value(2)
-        eq_(s1a.get_value(), 5)
-        eq_(s2.get_value(), 2)
+            control_file2 = tmp / "ctrl2"
+            print("Opening service proxy s2")
+            with service.ServiceProxy(S, control_file2) as s2:
+                stack.enter_context(connection_helper(s2))
+                eq_(s2.get_control_file(), control_file2)
+                assert s2.get_pid() != os.getpid()
+                assert s2.get_pid() != s1a.get_pid()
+                s2.set_value(2)
+                eq_(s1a.get_value(), 5)
+                eq_(s2.get_value(), 2)
 
-        s1a.exit()
-        time.sleep(0.1)
-        assert not control_file1.exists()
-        with assert_raises(Exception):
-            s1a.get_pid()
-        with assert_raises(Exception):
-            s1b.get_pid()
+            print("Opening service proxy s1b")
+            with service.ServiceProxy(S, control_file1) as s1b:
+                stack.enter_context(connection_helper(s1a))
+                eq_(s1b.get_control_file(), control_file1)
+                assert s1a.get_pid() != os.getpid()
+                eq_(s1a.get_pid(), s1b.get_pid())
+                eq_(s1b.get_value(), 5)
 
-        eq_(s2.get_value(), 2)
-
+                s1a.exit()
+                time.sleep(0.5)
+                assert not control_file1.exists()
+                with assert_raises(Exception):
+                    s1a.get_pid()
+                with assert_raises(Exception):
+                    s1b.get_pid()
         # s2 gets destroyed by the context manager
 
 def another_process_test():
     def set_value(control_file):
-        service = S.connect(control_file)
-        service.set_value(99)
+        with service.ServiceProxy(S, control_file) as s:
+            s.set_value(99)
 
     def check_value(control_file):
-        service = S.connect(control_file)
-        eq_(service.get_value(), 99)
-        service.exit()
+        with service.ServiceProxy(S, control_file) as s:
+            eq_(s.get_value(), 99)
+            s.exit()
 
     with contextlib.ExitStack() as stack:
         tmp = pathlib.Path(stack.enter_context(tempfile.TemporaryDirectory()))
@@ -108,4 +119,5 @@ def another_process_test():
         p2.start()
         p2.join()
 
+        time.sleep(0.5)
         assert not control_file.exists()
