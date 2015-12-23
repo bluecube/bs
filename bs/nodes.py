@@ -23,12 +23,11 @@ class Node:
         other.reverse_dependencies.add(self)
 
     def remove_dependency(self, other):
-        if other in self.dependencies:
-            raise RuntimeError("Dependency already existed")
-        assert self not in other.reverse_dependencies
+        if other not in self.dependencies:
+            raise RuntimeError("Removing nonexistent dependency")
 
-        self.dependencies.add(other)
-        other.reverse_dependencies.add(self)
+        self.dependencies.remove(other)
+        other.reverse_dependencies.remove(self)
 
     def get_hash(self):
         raise NotImplementedError()
