@@ -28,8 +28,9 @@ class Bs:
         else:
             self.output_directory = self.build_directory / "output"
 
-    def __enter__(self):
         self._context = context.Context(self.build_directory, self.output_directory)
+
+    def __enter__(self):
         return self
 
     def __exit__(self, ex_type, ex_val, ex_traceback):

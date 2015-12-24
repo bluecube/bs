@@ -28,7 +28,7 @@ class Context:
     def file_by_path(self, path):
         path = pathlib.Path(path)
         if path not in self._files:
-            self._files[path] = nodes.SourceFile(self, path)
+            self._files[path] = nodes.SourceFile(path)
         return self._files[path]
 
     def add_target(self, target):
@@ -56,7 +56,7 @@ class Context:
         with open("/tmp/nodes.dot", "w") as fp:
             self.dump_graph(fp)
 
-        traversal.update(self._targets, self._files.values(), 1)
+        traversal.update(self, self._targets, self._files.values(), 1)
 
         self._link_targets(self._targets)
 
@@ -80,7 +80,7 @@ class Context:
                 relative_build_directory = relative_build_directory / ".."
 
         for target in targets:
-            cached_path = target.get_path()
+            cached_path = target.get_path(self)
             output_file = self.output_directory / target.name
 
             if output_file.exists() or output_file.is_symlink():

@@ -5,26 +5,26 @@ import subprocess
 import shlex
 
 class GccCompiler(nodes.Builder):
-    def __init__(self, context):
-        super().__init__(context)
+    def __init__(self):
+        super().__init__()
         self.executable = "gcc"
         self.cflags = []
 
-    def build(self, input_paths, output_paths):
+    def build(self, context, input_paths, output_paths):
         """ Build input_paths is a list of pathlib.Path objects that should be
         compiled into list of patlib.Path objects output_paths. """
 
-        with self.context.tempfile() as depfile:
+        with context.tempfile() as depfile:
             commandline = [self.executable]
             commandline.extend(self.cflags)
-            commandline = [self.expand_variables(x) for x in commandline]
+            commandline = [self.expand_variables(context, x) for x in commandline]
 
             commandline.extend(["-c",
                                 "-MD",
                                 "-MF", str(depfile),
                                 "-o", str(output_paths[0]),
                                 str(input_paths[0])])
-            self.context.run_command(commandline)
+            context.run_command(commandline)
 
             with depfile.open("r") as fp:
                 return self._parse_dependencies(fp.read())
@@ -43,7 +43,7 @@ class GccCompiler(nodes.Builder):
     def create_associated_linker(self):
         """ Returns a linker that uses the same gcc executable as this compiler
         and initially passes the same cflags. """
-        linker = GccLinker(self.context)
+        linker = GccLinker()
         linker.executable = self.executable
         linker.cflags = self.cflags[:]
 
@@ -66,24 +66,24 @@ class GccCompiler(nodes.Builder):
         return sorted(set(x for x in split[1:] if x.strip()))
 
 class GccLinker(nodes.Builder):
-    def __init__(self, context):
-        super().__init__(context)
+    def __init__(self):
+        super().__init__()
         self.executable = "gcc"
         self.cflags = []
 
-    def build(self, input_paths, output_paths):
+    def build(self, context, input_paths, output_paths):
         """ Build input_paths is a list of pathlib.Path objects that should be
         compiled into list of patlib.Path objects output_paths. """
 
-        with self.context.tempfile("dep") as depfile:
+        with context.tempfile("dep") as depfile:
             commandline = [self.executable]
             commandline.extend(self.cflags)
-            commandline = [self.expand_variables(x) for x in commandline]
+            commandline = [self.expand_variables(context, x) for x in commandline]
 
             commandline.extend(["-Wl,--trace",
                                 "-o", str(output_paths[0])])
             commandline.extend(str(f) for f in input_paths)
-            self.context.run_command(commandline)
+            context.run_command(commandline)
 
             #TODO: return dependencies;
 

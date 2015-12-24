@@ -7,11 +7,11 @@ import bs
 class ConcatenateGenerator(bs.Builder):
     """ Example of a custom builder that has multiple inputs and multiple outputs. """
 
-    def __init__(self, context, function_name):
-        super().__init__(context)
+    def __init__(self, function_name):
+        super().__init__()
         self.function_name = function_name;
 
-    def build(self, input_paths, output_paths):
+    def build(self, context, input_paths, output_paths):
         """ Build input_paths is a list of pathlib.Path objects that should be
         compiled into list of patlib.Path objects output_paths. """
 
@@ -46,12 +46,12 @@ class ConcatenateGenerator(bs.Builder):
 with bs.Bs() as builder:
     # TODO: Add builder that generates header with date.
 
-    greet_generator = ConcatenateGenerator(builder, "fun");
+    greet_generator = ConcatenateGenerator("fun");
     generated_h, generated_c = builder.apply(greet_generator,
                                              builder.root.glob("*.txt"),
                                              ["generated.h", "generated.c"])
 
-    compiler = bs.gcc.GccCompiler(builder);
+    compiler = bs.gcc.GccCompiler();
     compiler.add_dependency(generated_h, "generated_h")
     compiler.cflags.append("-I{generated_h.directory}")
 

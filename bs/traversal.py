@@ -4,7 +4,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def update(targets, dirty, job_count = 1):
+def update(context, targets, dirty, job_count = 1):
     need_update = collections.Counter() # node: number of blockers
     new_dirty = set()
 
@@ -34,12 +34,12 @@ def update(targets, dirty, job_count = 1):
 
         def maybe_submit(node):
             def wrapper(node):
-                node.update()
+                node.update(context)
                 return node
 
             if node not in need_update:
                 logger.debug("not in need_update: %s", node)
-                node.update()
+                node.update(context)
                 return
 
             need_update[node] -= 1

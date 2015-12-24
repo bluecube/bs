@@ -1,15 +1,8 @@
 from . import util
 
 class Node:
-    """ Base class for node of the dependency graph.
-    context: Used for resolving paths nad registering nodes and hashes.
-             Either the bs.context.Context or bs.Bs that contains. """
-    def __init__(self, context):
-        try:
-            self.context = context._context
-        except AttributeError:
-            self.context = context
-
+    """ Base class for node of the dependency graph. """
+    def __init__(self):
         self.dependencies = set()
         self.named_dependencies = {}
         self.reverse_dependencies = set()
@@ -43,19 +36,19 @@ class Node:
     def get_hash(self):
         raise NotImplementedError()
 
-    def update(self):
+    def update(self, context):
         """ Called when a change is detected on a node or its dependencies. """
         pass
 
-    def expand_variables(self, string):
+    def expand_variables(self, context, string):
         class Wrapper:
             """ Maps self.name to o.get_name(context) """
             def __init__(self, o, context):
                 self._o = o
                 self._context = context
             def __getattr__(self, name):
-                return getattr(self._o, "get_" + name)()
-        return string.format(**{k: Wrapper(v, self.context)
+                return getattr(self._o, "get_" + name)(self._context)
+        return string.format(**{k: Wrapper(v, context)
                                 for k, v
                                 in self.named_dependencies.items()})
 
@@ -67,9 +60,12 @@ class Node:
     def hash_helper(cls, *args):
         return util.sha1_iterable([cls.__name__], *args)
 
+    def __format__(self, fmt):
+        raise Exception("You shouldn't format nodes. Maybe `.path` or `.directory` is misising?")
+
 
 class Builder(Node):
-    def build(self, input_paths, output_paths):
+    def build(self, context, input_paths, output_paths):
         raise NotImplementedError()
 
     def get_output_names(self, input_names):
@@ -87,12 +83,12 @@ class Builder(Node):
 class Application(Node):
     """ A node that connects builder, inputs files and generated files. """
     def __init__(self, context, builder, inputs, output_names):
-        super().__init__(context)
+        super().__init__()
 
         self.builder = builder
         self.add_dependency(builder)
 
-        self.inputs = [self._wrap_input(x) for x in util.maybe_iterable(inputs)]
+        self.inputs = [self._wrap_input(context, x) for x in util.maybe_iterable(inputs)]
         for input in self.inputs:
             self.add_dependency(input)
 
@@ -105,30 +101,30 @@ class Application(Node):
             if len(output_names) != output_count:
                 raise Exception("Wrong number of output names passed")
 
-        self.outputs = [GeneratedFile(self.context, self, i, name)
+        self.outputs = [GeneratedFile(self, i, name)
                         for i, name
                         in enumerate(output_names)]
 
         self.timer = util.Timer()
 
         self.implicit_dependencies = None
-        self._find_cached_implicit_dependencies()
+        self._find_cached_implicit_dependencies(context)
 
-    def _find_cached_implicit_dependencies(self):
+    def _find_cached_implicit_dependencies(self, context):
         partial_hash = self._get_hash(None)
-        candidates = self.context.cache.get_candidate_implicit_dependencies(partial_hash)
+        candidates = context.cache.get_candidate_implicit_dependencies(partial_hash)
 
         for deps in candidates:
-            if self._try_implicit_dependencies(deps):
+            if self._try_implicit_dependencies(context, deps):
                 return True
 
         self._set_implicit_dependencies(None)
         return False
 
-    def _try_implicit_dependencies(self, deps):
+    def _try_implicit_dependencies(self, context, deps):
         ret = []
         for path, hash in deps:
-            node = self.context.file_by_path(path)
+            node = context.file_by_path(path)
             if node.get_hash() == hash:
                 ret.append(node)
             else:
@@ -136,11 +132,11 @@ class Application(Node):
         self._set_implicit_dependencies(ret)
         return True
 
-    def _wrap_input(self, input):
+    def _wrap_input(self, context, input):
         if isinstance(input, Node):
             return input
         else:
-            return self.context.file_by_path(input)
+            return context.file_by_path(input)
 
     def _set_implicit_dependencies(self, nodes):
         if self.implicit_dependencies is not None:
@@ -152,32 +148,32 @@ class Application(Node):
                 if node not in self.dependencies:
                     self.add_dependency(node)
 
-    def update(self):
-        if self._find_cached_implicit_dependencies():
+    def update(self, context):
+        if self._find_cached_implicit_dependencies(context):
             print("Have cached resutls", str(self))
             return
 
         #print("Building", str(self))
-        with self.context.tempdir() as temp, \
+        with context.tempdir() as temp, \
              self.timer:
 
-            input_paths = [input.get_path() for input in self.inputs]
+            input_paths = [input.get_path(context) for input in self.inputs]
             output_paths = [temp/output.name for output in self.outputs]
 
-            computed_deps = self.builder.build(input_paths, output_paths)
+            computed_deps = self.builder.build(context, input_paths, output_paths)
             if computed_deps is None:
                 computed_deps = []
 
-            self._set_implicit_dependencies([self.context.file_by_path(p) for p in computed_deps])
+            self._set_implicit_dependencies([context.file_by_path(p) for p in computed_deps])
 
-            self.context.cache.put(self.get_hash(), self._get_hash(None),
-                                   output_paths,
-                                   [(node.get_path(), node.get_hash()) for node in self.implicit_dependencies])
+            context.cache.put(self.get_hash(), self._get_hash(None),
+                              output_paths,
+                              [(node.get_path(context), node.get_hash()) for node in self.implicit_dependencies])
 
             for node in self.inputs:
-                node.accessed()
+                node.accessed(context)
             for node in self.implicit_dependencies:
-                node.accessed()
+                node.accessed(context)
 
     def get_hash(self):
         return self._get_hash(self.implicit_dependencies)
@@ -191,35 +187,34 @@ class Application(Node):
                                 (x.get_hash() for x in self.inputs),
                                 implicit_dependencies)
 
-    def accessed(self):
+    def accessed(self, context):
         """ Called after one of this application's files is used. """
         assert(self.implicit_dependencies is not None)
-        self.context.cache.accessed(self.get_hash())
+        context.cache.accessed(self.get_hash())
 
     def __str__(self):
         return self.str_helper(self.builder, *self.inputs)
 
 
 class File(Node):
-    def __init__(self, context):
-        super().__init__(context)
-        self.directory = _DirectoryProxy(self)
+    def __init__(self):
+        super().__init__()
 
-    def get_path(self):
+    def get_path(self, context):
         raise NotImplementedError()
 
-    def get_directory(self):
-        return self.get_path().parent
+    def get_directory(self, context):
+        return self.get_path(context).parent
 
-    def accessed(self):
+    def accessed(self, context):
         return
 
 class SourceFile(File):
-    def __init__(self, context, path):
-        super().__init__(context)
+    def __init__(self, path):
+        super().__init__()
         self.path = path
 
-    def get_path(self):
+    def get_path(self, context):
         return self.path
 
     def get_hash(self):
@@ -235,31 +230,22 @@ class GeneratedFile(File):
     This kind of file can be deleted any time (forcing rebuilds when it is necessary later)
     or (potentially) cached even when not needed. """
 
-    def __init__(self, context, application, index, name):
-        super().__init__(context)
-        assert(context is application.context)
+    def __init__(self, application, index, name):
+        super().__init__()
         self.application = application
         self.index = index
         self.name = name or "output{:02d}".format(index)
         self.add_dependency(application)
 
-    def get_path(self):
-        return self.context.cache.get_directory(self.application.get_hash()) / self.name
+    def get_path(self, context):
+        return context.cache.get_directory(self.application.get_hash()) / self.name
 
     def get_hash(self):
         return self.hash_helper([self.application.get_hash(), self.index, self.name])
 
-    def accessed(self):
-        self.application.accessed()
+    def accessed(self, context):
+        self.application.accessed(context)
 
     def __str__(self):
         return self.str_helper(self.application.builder.__class__.__name__,
                                self.index)
-
-
-class _DirectoryProxy:
-    def __init__(self, file_node):
-        self.node = file_node
-
-    def __str__(self):
-        return str(self.node.get_path().parent)
