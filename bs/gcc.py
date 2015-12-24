@@ -17,6 +17,8 @@ class GccCompiler(nodes.Builder):
         with self.context.tempfile() as depfile:
             commandline = [self.executable]
             commandline.extend(self.cflags)
+            commandline = [self.expand_variables(x) for x in commandline]
+
             commandline.extend(["-c",
                                 "-MD",
                                 "-MF", str(depfile),
@@ -44,6 +46,11 @@ class GccCompiler(nodes.Builder):
         linker = GccLinker(self.context)
         linker.executable = self.executable
         linker.cflags = self.cflags[:]
+
+        for name, dep in self.named_dependencies.items():
+            assert dep not in linker.dependencies
+            linker.add_dependency(dep, name)
+
         return linker
 
     @staticmethod
@@ -71,6 +78,8 @@ class GccLinker(nodes.Builder):
         with self.context.tempfile("dep") as depfile:
             commandline = [self.executable]
             commandline.extend(self.cflags)
+            commandline = [self.expand_variables(x) for x in commandline]
+
             commandline.extend(["-Wl,--trace",
                                 "-o", str(output_paths[0])])
             commandline.extend(str(f) for f in input_paths)

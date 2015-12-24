@@ -11,13 +11,19 @@ class Node:
             self.context = context
 
         self.dependencies = set()
+        self.named_dependencies = {}
         self.reverse_dependencies = set()
         self.targets = set()
 
-    def add_dependency(self, other):
+    def add_dependency(self, other, name=None):
         if other in self.dependencies:
             raise RuntimeError("Dependency already existed")
         assert self not in other.reverse_dependencies
+
+        if name is not None:
+            if name in self.named_dependencies:
+                raise RuntimeError("Dependency name already existed")
+            self.named_dependencies[name] = other
 
         self.dependencies.add(other)
         other.reverse_dependencies.add(self)
@@ -25,6 +31,11 @@ class Node:
     def remove_dependency(self, other):
         if other not in self.dependencies:
             raise RuntimeError("Removing nonexistent dependency")
+
+        for k, v in self.named_dependencies.items():
+            if v is other:
+                del self.named_dependencies[k]
+                break
 
         self.dependencies.remove(other)
         other.reverse_dependencies.remove(self)
@@ -35,6 +46,18 @@ class Node:
     def update(self):
         """ Called when a change is detected on a node or its dependencies. """
         pass
+
+    def expand_variables(self, string):
+        class Wrapper:
+            """ Maps self.name to o.get_name(context) """
+            def __init__(self, o, context):
+                self._o = o
+                self._context = context
+            def __getattr__(self, name):
+                return getattr(self._o, "get_" + name)()
+        return string.format(**{k: Wrapper(v, self.context)
+                                for k, v
+                                in self.named_dependencies.items()})
 
     @classmethod
     def str_helper(cls, *args):
@@ -184,6 +207,9 @@ class File(Node):
 
     def get_path(self):
         raise NotImplementedError()
+
+    def get_directory(self):
+        return self.get_path().parent
 
     def accessed(self):
         return

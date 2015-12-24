@@ -52,8 +52,8 @@ with bs.Bs() as builder:
                                              ["generated.h", "generated.c"])
 
     compiler = bs.gcc.GccCompiler(builder);
-    compiler.add_dependency(generated_h)
-    compiler.cflags.extend(["-I", generated_h.directory])
+    compiler.add_dependency(generated_h, "generated_h")
+    compiler.cflags.append("-I{generated_h.directory}")
 
     ofiles = []
     for f in builder.root.glob("**/*.c"):
