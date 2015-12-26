@@ -16,8 +16,12 @@ class Service:
     of its non underscore methods available using pickle-over-socket RPC interface.
     A service is identified by a simple json file that contains its PID and
     port number.
+    Service is a context manager. Entered when service starts, exited when it stops.
 
     Instance variables:
+    _timeout -- Must be set by subclass. After this many seconds without any request
+                the server will raise TimeoutError and stop. None means no limit.
+    _last_call_time -- Time of last RPC call.
     _server -- SocketServer subclass that handles the connection
     _lock -- Lock that protects all method calls.
     _client_address -- (ip, port) tuple of client that calls the current function
@@ -28,10 +32,16 @@ class Service:
         Argument `control_file` contains path to the control file and is not used
         in the default implementation. """
 
-    def _exit(self):
+    def __enter__(self):
+        """ To be overridden """
+
+    def __exit__(self, *exc):
+        """ To be overridden """
+
+    def _stop(self):
         """ Exit the main loop. Intended to be called by subclasses. """
-        # Starts the thread that only stops the server and immediately exits
-        threading.Thread(target=self._server.shutdown).start()
+        logger.info("Service stop requested.")
+        threading.Thread(target=self._server.shutdown, daemon=True).start()
 
 
 class ServiceProxy:
@@ -119,6 +129,19 @@ class _PickleRPCServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
         self.instance = instance
         super().__init__(address, _PickleRPCRequestHandler)
 
+    def service_actions(self):
+        super().service_actions()
+
+        with self.instance._lock:
+            if self.instance._timeout is None or \
+               time.time() <= self.instance._last_call_time + self.instance._timeout:
+                return
+            logger.info("Timed out waiting for RPC calls")
+            raise TimeoutError("Timed out waiting for RPC calls ({} > {} + {})".format(
+                                 time.time(),
+                                 self.instance._last_call_time,
+                                 self.instance._timeout))
+
 class _PickleRPCRequestHandler(socketserver.StreamRequestHandler):
     def handle(self):
         while True:
@@ -135,6 +158,7 @@ class _PickleRPCRequestHandler(socketserver.StreamRequestHandler):
                 with self.server.instance._lock:
                     self.server.instance._client_address = self.client_address
                     result = func(*args, **kwargs)
+                    self.server.instance._last_call_time = time.time()
             except:
                 ex_type, ex_value, ex_tb = sys.exc_info()
                 pickle.dump((None, (ex_type, ex_value, None)), self.wfile)
@@ -153,13 +177,15 @@ def _run(cls, control_file):
             instance = cls(control_file)
 
             instance._server = _PickleRPCServer(("localhost", 0), instance)
+            instance._last_call_time = time.time()
             instance._lock = threading.Lock()
 
             json.dump({"pid": os.getpid(),
                        "port": instance._server.socket.getsockname()[1]},
                       fp)
 
-        instance._server.serve_forever()
+        with instance:
+            instance._server.serve_forever()
     finally:
         control_file.unlink()
 

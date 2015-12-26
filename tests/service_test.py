@@ -7,8 +7,11 @@ import contextlib
 import signal
 import time
 import multiprocessing
+import pickle
 
 class S(service.Service):
+    _timeout = 60
+
     def __init__(self, control_file):
         self._control_file = control_file
         self._value = 0
@@ -20,7 +23,7 @@ class S(service.Service):
         return os.getpid()
 
     def exit(self):
-        self._exit()
+        self._stop()
 
     def set_value(self, value):
         self._value = value
@@ -30,6 +33,18 @@ class S(service.Service):
 
     def exception(self):
         raise Exception("Test exception")
+
+class T(S):
+    _timeout = 1.5
+
+    def set_path(self, path):
+        self._path = path
+
+    def __exit__(self, exc_type, exc_val, ex_tb):
+        with self._path.open("wb") as fp:
+            pickle.dump(exc_val, fp)
+        if exc_type == TimeoutError:
+            return True # Supress exception
 
 @nottest
 @contextlib.contextmanager
@@ -64,7 +79,6 @@ def basic_test():
                 try:
                     s1a.exception()
                 except Exception as e:
-                    print(e)
                     raise
 
             control_file2 = tmp / "ctrl2"
@@ -121,3 +135,28 @@ def another_process_test():
 
         time.sleep(0.5)
         assert not control_file.exists()
+
+def timeout_test():
+    with contextlib.ExitStack() as stack:
+        tmp = pathlib.Path(stack.enter_context(tempfile.TemporaryDirectory()))
+
+        control_file = tmp / "ctrl"
+        out_file = tmp / "out"
+        assert not control_file.exists()
+
+        print("Opening service proxy s")
+        with service.ServiceProxy(T, control_file) as s:
+            stack.enter_context(connection_helper(s))
+
+            s.set_path(out_file)
+
+            time.sleep(2.0)
+
+            with out_file.open("rb") as fp:
+                loaded = pickle.load(fp)
+                assert isinstance(loaded, TimeoutError)
+
+            with assert_raises(Exception):
+                s.get_pid()
+            assert not control_file.exists()
+
