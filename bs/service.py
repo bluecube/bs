@@ -8,6 +8,7 @@ import multiprocessing
 import socket
 import socketserver
 import logging
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,7 @@ class ServiceProxy:
                 result._proxy = self
             return result
         else:
-            raise exc_info[1]
+            raise exc_info[1] from Exception("Original traceback:\n" +"".join(traceback.format_list(exc_info[2])))
 
     def _open(self, port):
         self._socket = socket.create_connection(("localhost", port))
@@ -190,7 +191,7 @@ class _PickleRPCRequestHandler(socketserver.StreamRequestHandler):
                     self.server.instance._last_call_time = time.time()
             except:
                 ex_type, ex_value, ex_tb = sys.exc_info()
-                pickle.dump((None, (ex_type, ex_value, None)), self.wfile)
+                pickle.dump((None, (ex_type, ex_value, traceback.extract_tb(ex_tb))), self.wfile)
                 # TODO: Pass traceback for exceptions as well
             else:
                 pickle.dump((result, None), self.wfile)
@@ -228,3 +229,10 @@ def _daemonize():
     if os.fork():
         sys.exit(0)
     os.setsid()
+
+    sys.stdout.close()
+    os.close(0)
+    sys.stderr.close()
+    os.close(1)
+    sys.stdin.close()
+    os.close(2)
