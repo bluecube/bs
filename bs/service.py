@@ -81,14 +81,18 @@ class ServiceProxy:
 
     def __getattr__(self, name):
         def func(*args, **kwargs):
-            pickle.dump((name, args, kwargs), self._wfile)
-            result, exc_info = pickle.load(self._rfile)
-            if exc_info is None:
-                return result
-            else:
-                raise exc_info[1]
-
+            return self._call(name, *args, **kwargs)
         return func
+
+    def _call(self, name, *args, **kwargs):
+        pickle.dump((name, args, kwargs), self._wfile)
+        result, exc_info = pickle.load(self._rfile)
+        if exc_info is None:
+            if isinstance(result, IteratorWrapper):
+                result._proxy = self
+            return result
+        else:
+            raise exc_info[1]
 
     def _open(self, port):
         self._socket = socket.create_connection(("localhost", port))
@@ -121,6 +125,20 @@ class ServiceProxy:
             if time.time() > end_time:
                 return
 
+class IteratorWrapper:
+    """ Class that marks wrapped iterators. These are iterated in the service and
+    only their results are transfered. """
+    def __init__(self, it):
+        self.it = iter(it)
+        self._proxy = None
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return self._proxy._call(self.it)
+
+
 class _PickleRPCServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
     daemon_threads = True
@@ -144,6 +162,7 @@ class _PickleRPCServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 class _PickleRPCRequestHandler(socketserver.StreamRequestHandler):
     def handle(self):
+        iterators = {}
         while True:
             try:
                 func_name, args, kwargs = pickle.load(self.rfile)
@@ -154,10 +173,20 @@ class _PickleRPCRequestHandler(socketserver.StreamRequestHandler):
                 if func_name.startswith("_"):
                     raise NameError("Underscore names are not forwarded from service")
 
-                func = getattr(self.server.instance, func_name)
                 with self.server.instance._lock:
                     self.server.instance._client_address = self.client_address
-                    result = func(*args, **kwargs)
+                    if func_name in iterators:
+                        assert len(args) == 0
+                        assert len(kwargs) == 0
+                        result = next(iterators[func_name])
+                    else:
+                        func = getattr(self.server.instance, func_name)
+                        result = func(*args, **kwargs)
+
+                    if isinstance(result, IteratorWrapper):
+                        iterator_id = "!" + str(id(result.it))
+                        iterators[iterator_id] = result.it # TODO: Now we are memory leaking exhausted iterators
+                        result.it = iterator_id
                     self.server.instance._last_call_time = time.time()
             except:
                 ex_type, ex_value, ex_tb = sys.exc_info()

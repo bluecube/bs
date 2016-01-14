@@ -34,6 +34,13 @@ class S(service.Service):
     def exception(self):
         raise Exception("Test exception")
 
+    def iterate(self):
+        def x():
+            for i in range(10):
+                yield self._value
+                self._value += 1
+        return service.IteratorWrapper(x())
+
 class T(S):
     _timeout = 1.5
 
@@ -160,3 +167,22 @@ def timeout_test():
                 s.get_pid()
             assert not control_file.exists()
 
+def iterator_test():
+    with contextlib.ExitStack() as stack:
+        tmp = pathlib.Path(stack.enter_context(tempfile.TemporaryDirectory()))
+
+        control_file = tmp / "ctrl"
+
+        s = stack.enter_context(service.ServiceProxy(S, control_file))
+        stack.enter_context(connection_helper(s))
+
+        iterator = s.iterate()
+
+        assert_sequence_equal(list(iterator), list(range(10)))
+
+        eq_(s.get_value(), 10)
+
+        with assert_raises(StopIteration):
+            next(iterator)
+
+        eq_(s.get_value(), 10)
