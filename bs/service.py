@@ -9,6 +9,7 @@ import socket
 import socketserver
 import logging
 import traceback
+import pathlib
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,11 @@ class Service:
 class ServiceProxy:
     def __init__(self, cls, control_file):
         self._cls = cls
-        self._control_file = control_file
+        control_file = pathlib.Path(control_file)
+        if not control_file.is_absolute():
+            self._control_file = pathlib.Path.cwd() / control_file
+        else:
+            self._control_file = control_file
         self._socket = None
         self._rfile = None
         self._wfile = None

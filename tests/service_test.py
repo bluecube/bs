@@ -66,6 +66,15 @@ def connection_helper(connection):
         except ProcessLookupError:
             pass # The process was already stopped
 
+@nottest
+@contextlib.contextmanager
+def chdir(d):
+    original = os.getcwd()
+    os.chdir(str(d))
+    try:
+        yield
+    finally:
+        os.chdir(original)
 
 def basic_test():
     with contextlib.ExitStack() as stack:
@@ -186,3 +195,18 @@ def iterator_test():
             next(iterator)
 
         eq_(s.get_value(), 10)
+
+def relative_path_test():
+    """ Check that we can connect to the service even when specifying the control
+    file as a relative path """
+    with contextlib.ExitStack() as stack:
+        tmp = pathlib.Path(stack.enter_context(tempfile.TemporaryDirectory()))
+
+        stack.enter_context(chdir(tmp))
+
+        control_file = "ctrl"
+
+        s = stack.enter_context(service.ServiceProxy(S, control_file))
+        stack.enter_context(connection_helper(s))
+
+        eq_(s.get_value(), 0)
