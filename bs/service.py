@@ -223,7 +223,8 @@ def _run(cls, control_file):
             instance._server.serve_forever()
 
     except Exception as e:
-        logger.exception("Unhandled exception in service")
+        with (control_file.parent / "service_error").open("w") as fp:
+            traceback.print_exc(file=fp)
     finally:
         control_file.unlink()
 
