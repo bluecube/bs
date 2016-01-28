@@ -1,8 +1,8 @@
 from . import util
 from . import gcc
 
-from .bs import Bs
 from .nodes import Builder
+from .run import run
 
 import logging
 logging.basicConfig(level=logging.DEBUG)

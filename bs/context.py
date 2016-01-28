@@ -12,33 +12,31 @@ from . import cache
 from . import traversal
 
 class Context:
-    """ State of the system. """
-    def __init__(self, build_directory, output_directory):
+    """ State of the system.
+    Holds the graph of dependencies. """
+    def __init__(self, build_directory):
         self.build_directory = build_directory
-        self.output_directory = output_directory
         self.temp_directory = self.build_directory / "tmp"
         self.cache = cache.Cache(self.build_directory / "cache")
 
         self.verbose = True
 
-        self._files = {} # Mapping of file paths to nodes.File instances
-        self._targets = []
-        self._dirty = set()
+        self.files = {} # Mapping of file paths to nodes.File instances
+        self.targets = {} # build script path -> [targets]
+        self.dirty = set()
 
     def file_by_path(self, path):
         path = pathlib.Path(path)
-        if path not in self._files:
-            self._files[path] = nodes.SourceFile(path)
-        return self._files[path]
+        if path not in self.files:
+            self.files[path] = nodes.SourceFile(path)
+        return self.files[path]
 
-    def add_target(self, target):
-        if target in self._targets:
-            raise Exception("Attempting to set a node as a target second time")
-        self._targets.append(target)
+    def set_targets(self, build_script, targets):
+        self.targets[build_script] = targets
 
     def _mark_targets(self):
         """ Mark the final targets in all registered nodes. """
-        for target in self._targets:
+        for target in self.targets:
             to_mark = collections.deque([target])
             while to_mark:
                 node = to_mark.popleft()
@@ -56,14 +54,14 @@ class Context:
         with open("/tmp/nodes.dot", "w") as fp:
             self.dump_graph(fp)
 
-        traversal.update(self, self._targets, self._files.values(), 1)
+        traversal.update(self, self.targets, self.files.values(), 1)
 
-        self._link_targets(self._targets)
+        self._link_targets(self.targets)
 
     def save(self):
         self.cache.save()
 
-    def _link_targets(self, targets):
+    def _link_targets(self, targets, output_directory):
         """ Link the specified target files to the output directory. """
         try:
             self.output_directory.mkdir(parents=True)
@@ -109,7 +107,7 @@ class Context:
                                        universal_newlines=True)
 
     def dump_graph(self, fp):
-        to_process = list(self._targets)[:]
+        to_process = list(self.targets)[:]
         nodes = set(to_process)
 
         fp.write("digraph Nodes{")

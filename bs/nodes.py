@@ -1,11 +1,12 @@
 from . import util
+import weakref
 
 class Node:
     """ Base class for node of the dependency graph. """
     def __init__(self):
         self.dependencies = set()
         self.named_dependencies = {}
-        self.reverse_dependencies = set()
+        self.reverse_dependencies = weakref.WeakSet()
         self.targets = set()
 
     def add_dependency(self, other, name=None):
@@ -63,6 +64,15 @@ class Node:
     def __format__(self, fmt):
         raise Exception("You shouldn't format nodes. Maybe `.path` or `.directory` is misising?")
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state["reverse_dependencies"]
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__ = state
+        for node in self.dependencies:
+            node.reverse_dependencies.add(self)
 
 class Builder(Node):
     def build(self, context, input_paths, output_paths):
@@ -82,24 +92,15 @@ class Builder(Node):
 
 class Application(Node):
     """ A node that connects builder, inputs files and generated files. """
-    def __init__(self, context, builder, inputs, output_names):
+    def __init__(self, builder, inputs, output_names):
         super().__init__()
 
         self.builder = builder
         self.add_dependency(builder)
 
-        self.inputs = [self._wrap_input(context, x) for x in util.maybe_iterable(inputs)]
+        self.inputs = inputs
         for input in self.inputs:
             self.add_dependency(input)
-
-        output_count = builder.get_output_count(len(self.inputs))
-
-        if output_names is None:
-            output_names = [None] * output_count
-        else:
-            output_names = list(util.maybe_iterable(output_names))
-            if len(output_names) != output_count:
-                raise Exception("Wrong number of output names passed")
 
         self.outputs = [GeneratedFile(self, i, name)
                         for i, name
@@ -108,7 +109,6 @@ class Application(Node):
         self.timer = util.Timer()
 
         self.implicit_dependencies = None
-        self._find_cached_implicit_dependencies(context)
 
     def _find_cached_implicit_dependencies(self, context):
         partial_hash = self._get_hash(None)
@@ -131,12 +131,6 @@ class Application(Node):
                 return False
         self._set_implicit_dependencies(ret)
         return True
-
-    def _wrap_input(self, context, input):
-        if isinstance(input, Node):
-            return input
-        else:
-            return context.file_by_path(input)
 
     def _set_implicit_dependencies(self, nodes):
         if self.implicit_dependencies is not None:

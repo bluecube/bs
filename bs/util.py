@@ -62,3 +62,10 @@ class Timer:
                 self.time = elapsed
             else:
                 self.time = self._smoothing * self.time + (1 - self._smoothing) * elapsed
+
+def synchronized(f):
+    @functools.wraps(f)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return f(self, *args, **kwargs)
+    return wrapper

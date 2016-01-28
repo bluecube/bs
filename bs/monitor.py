@@ -1,4 +1,4 @@
-import util
+from . import util
 
 import pathlib
 import threading
@@ -6,13 +6,6 @@ import functools
 import os
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-
-def _synchronized(f):
-    @functools.wraps(f)
-    def wrapper(self, *args, **kwargs):
-        with self._lock:
-            return f(self, *args, **kwargs)
-    return wrapper
 
 class Monitor:
     def __init__(self):
@@ -31,7 +24,7 @@ class Monitor:
         self._observer.stop()
         self._observer.join()
 
-    @_synchronized
+    @util.synchronized
     def _examine_path(self, path):
         try:
             path = pathlib.Path(path).resolve()
@@ -46,7 +39,7 @@ class Monitor:
         else:
             self._changed[path] = hash
 
-    @_synchronized
+    @util.synchronized
     def watch(self, path, recursive = False):
         self._observer.schedule(self._handler, path, recursive)
 
@@ -60,7 +53,7 @@ class Monitor:
                     fullpath = pathlib.Path(dirpath) / filename
                     self._old_state[fullpath] = util.sha1_file(fullpath)
 
-    @_synchronized
+    @util.synchronized
     def update(self):
         ret = list(self._changed.keys())
 
