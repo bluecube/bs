@@ -127,20 +127,28 @@ class ServiceProxy:
     def _try_connect(self, timeout):
         end_time = time.time() + timeout
         while True:
-            try:
-                with self._control_file.open("r") as fp:
-                    loaded = json.load(fp)
-            except FileNotFoundError:
-                pass
-            except ValueError as e:
-                pass
-            else:
-                self._open(loaded["port"])
-
-            time.sleep(0.1)
-
+            if self._try_connect_once():
+                return
             if time.time() > end_time:
                 return
+            time.sleep(0.1)
+
+    def _try_connect_once(self):
+        try:
+            with self._control_file.open("r") as fp:
+                loaded = json.load(fp)
+        except FileNotFoundError:
+            return False
+        except ValueError as e:
+            return False
+
+        try:
+            self._open(loaded["port"])
+        except ConnectionRefusedError:
+            return False
+
+        assert self._socket is not None
+        return True
 
 class IteratorWrapper:
     """ Class that marks wrapped iterators. These are iterated in the service and
