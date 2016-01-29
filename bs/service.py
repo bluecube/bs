@@ -47,7 +47,7 @@ class Service:
 
 
 class ServiceProxy:
-    def __init__(self, cls, control_file):
+    def __init__(self, cls, control_file, force_restart=False):
         self._cls = cls
         control_file = pathlib.Path(control_file)
         if not control_file.is_absolute():
@@ -57,6 +57,7 @@ class ServiceProxy:
         self._socket = None
         self._rfile = None
         self._wfile = None
+        self._force_restart = force_restart
 
     def __enter__(self):
         """ Connect to the service, start it if not already running.
@@ -64,6 +65,13 @@ class ServiceProxy:
 
         try:
             self._try_connect(0.5)
+            if self._socket is not None and self._force_restart:
+                logger.info("Stopping service %s with control file %s (forced restart)",
+                            self._cls.__name__,
+                            self._control_file)
+                self._call("_stop")
+                self._close()
+                time.sleep(0.5)
             if self._socket is None:
                 logger.info("Starting service %s with control file %s",
                             self._cls.__name__,
@@ -108,10 +116,13 @@ class ServiceProxy:
     def _close(self):
         if self._wfile:
             self._wfile.close()
+            self._wfile = None
         if self._rfile:
             self._rfile.close()
+            self._rfile = None
         if self._socket:
             self._socket.close()
+            self._socket = None
 
     def _try_connect(self, timeout):
         end_time = time.time() + timeout
@@ -172,9 +183,6 @@ class _PickleRPCRequestHandler(socketserver.StreamRequestHandler):
         while True:
             try:
                 func_name, args, kwargs = pickle.load(self.rfile)
-
-                if func_name.startswith("_"):
-                    raise NameError("Underscore names are not forwarded from service")
 
                 with self.server.instance._lock:
                     self.server.instance._client_address = self.client_address
