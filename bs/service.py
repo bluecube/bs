@@ -172,10 +172,7 @@ class _PickleRPCRequestHandler(socketserver.StreamRequestHandler):
         while True:
             try:
                 func_name, args, kwargs = pickle.load(self.rfile)
-            except EOFError:
-                break
 
-            try:
                 if func_name.startswith("_"):
                     raise NameError("Underscore names are not forwarded from service")
 
