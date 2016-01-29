@@ -4,8 +4,10 @@ from . import context
 import contextlib
 import logging
 
-def connect(build_directory):
-    return service.ServiceProxy(Backend, build_directory / "backend_handle.json")
+def connect(build_directory, force_restart):
+    return service.ServiceProxy(Backend,
+                                build_directory / "backend_handle.json",
+                                force_restart)
 
 class Backend(service.Service):
     _timeout = 20 * 60 # Shut down after 20 minutes of inactivity
@@ -28,7 +30,7 @@ class Backend(service.Service):
         suppress = suppress or ex_type == TimeoutError
         return suppress
 
-    def need_run_config(self):
+    def need_run_config(build_script, self):
         return True
 
     def upload_targets(self, build_script, targets):

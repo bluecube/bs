@@ -42,7 +42,7 @@ class Service:
 
     def _stop(self):
         """ Exit the main loop. Intended to be called by subclasses. """
-        logger.info("Service stop requested.")
+        #logger.info("Service stop requested.")
         threading.Thread(target=self._server.shutdown, daemon=True).start()
 
 
@@ -179,7 +179,6 @@ class _PickleRPCServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
             if self.instance._timeout is None or \
                time.time() <= self.instance._last_call_time + self.instance._timeout:
                 return
-            logger.info("Timed out waiting for RPC calls")
             raise TimeoutError("Timed out waiting for RPC calls ({} > {} + {})".format(
                                  time.time(),
                                  self.instance._last_call_time,

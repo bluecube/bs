@@ -71,8 +71,11 @@ class Node:
 
     def __setstate__(self, state):
         self.__dict__.update(state)
-        self.reverse_dependencies = weakref.WeakSet()
+        if not hasattr(self, "reverse_dependencies"):
+            self.reverse_dependencies = weakref.WeakSet()
         for node in self.dependencies:
+            if not hasattr(node, "reverse_dependencies"):
+                    node.reverse_dependencies = weakref.WeakSet()
             node.reverse_dependencies.add(self)
 
 class Builder(Node):
