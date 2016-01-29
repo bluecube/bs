@@ -70,7 +70,8 @@ class Node:
         return state
 
     def __setstate__(self, state):
-        self.__dict__ = state
+        self.__dict__.update(state)
+        self.reverse_dependencies = weakref.WeakSet()
         for node in self.dependencies:
             node.reverse_dependencies.add(self)
 

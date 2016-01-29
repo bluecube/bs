@@ -24,7 +24,7 @@ class Backend(service.Service):
             raise
 
     def __exit__(self, ex_type, ex_value, ex_tb):
-        suppress = self.stack.__exit(ex_type, ex_value, ex_tb)
+        suppress = self.stack.__exit__(ex_type, ex_value, ex_tb)
         suppress = suppress or ex_type == TimeoutError
         return suppress
 
