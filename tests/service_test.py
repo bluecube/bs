@@ -197,8 +197,7 @@ def iterator_test():
         eq_(s.get_value(), 10)
 
 def relative_path_test():
-    """ Check that we can connect to the service even when specifying the control
-    file as a relative path """
+    """ Check that we can connect to the service even when specifying the control file as a relative path """
     with contextlib.ExitStack() as stack:
         tmp = pathlib.Path(stack.enter_context(tempfile.TemporaryDirectory()))
 
@@ -210,3 +209,24 @@ def relative_path_test():
         stack.enter_context(connection_helper(s))
 
         eq_(s.get_value(), 0)
+
+def force_reload_test():
+    with contextlib.ExitStack() as stack:
+        tmp = pathlib.Path(stack.enter_context(tempfile.TemporaryDirectory()))
+
+        control_file = tmp / "ctrl"
+
+        s1 = stack.enter_context(service.ServiceProxy(S, control_file, force_restart = True))
+        stack.enter_context(connection_helper(s1))
+        s1.set_value(100)
+        eq_(s1.get_value(), 100)
+
+        s2 = stack.enter_context(service.ServiceProxy(S, control_file, force_restart = True))
+        stack.enter_context(connection_helper(s2))
+
+        with assert_raises(Exception):
+            s1.get_value()
+        eq_(s2.get_value(), 0)
+        with assert_raises(Exception):
+            s1.get_value()
+        eq_(s2.get_value(), 0)
