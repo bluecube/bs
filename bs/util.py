@@ -2,6 +2,7 @@ import hashlib
 import mmap
 import contextlib
 import time
+import pathlib
 
 @contextlib.contextmanager
 def mmap_file(path):
@@ -69,3 +70,9 @@ def synchronized(f):
         with self._lock:
             return f(self, *args, **kwargs)
     return wrapper
+
+def make_absolute(path):
+    if not path.is_absolute():
+        return pathlib.Path.cwd() / path
+    else:
+        return path

@@ -37,7 +37,7 @@ class UserContext:
             return self._files[path]
 
     def add_target(self, target):
-        self._targets.append(target)
+        self._targets.extend(util.maybe_iterable(target))
 
 def run(configure_callback,
         root_directory = None,

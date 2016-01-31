@@ -1,13 +1,14 @@
 from . import util
 import weakref
+import pathlib
 
 class Node:
     """ Base class for node of the dependency graph. """
     def __init__(self):
         self.dependencies = set()
         self.named_dependencies = {}
-        self.reverse_dependencies = weakref.WeakSet()
-        self.targets = set()
+        self.reverse_dependencies = weakref.WeakSet() # Reconstructed from dependencies when pickling
+        self.targets = None
 
     def add_dependency(self, other, name=None):
         if other in self.dependencies:
@@ -77,6 +78,7 @@ class Node:
             if not hasattr(node, "reverse_dependencies"):
                     node.reverse_dependencies = weakref.WeakSet()
             node.reverse_dependencies.add(self)
+        self.targets = weakref.WeakSet()
 
 class Builder(Node):
     def build(self, context, input_paths, output_paths):
@@ -148,7 +150,7 @@ class Application(Node):
 
     def update(self, context):
         if self._find_cached_implicit_dependencies(context):
-            print("Have cached resutls", str(self))
+            #print("Have cached resutls", str(self))
             return
 
         #print("Building", str(self))
@@ -162,7 +164,16 @@ class Application(Node):
             if computed_deps is None:
                 computed_deps = []
 
-            self._set_implicit_dependencies([context.file_by_path(p) for p in computed_deps])
+            implicit_dependencies = []
+            for path in computed_deps:
+                path = pathlib.Path(path)
+                if not path.is_absolute():
+                    raise Exception("Builder must return implicit dependencies as absolute paths.")
+                node = context.file_by_path(path)
+                node.targets.union(self.targets)
+                implicit_dependencies.append(node)
+
+            self._set_implicit_dependencies(implicit_dependencies)
 
             context.cache.put(self.get_hash(), self._get_hash(None),
                               output_paths,
@@ -210,7 +221,7 @@ class File(Node):
 class SourceFile(File):
     def __init__(self, path):
         super().__init__()
-        self.path = path
+        self.path = util.make_absolute(path)
 
     def get_path(self, context):
         return self.path

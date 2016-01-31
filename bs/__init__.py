@@ -1,4 +1,3 @@
-from . import util
 from . import gcc
 
 from .nodes import Builder

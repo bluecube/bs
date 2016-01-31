@@ -6,6 +6,7 @@ import shutil
 import os
 import subprocess
 import sys
+import weakref
 
 from . import nodes
 from . import cache
@@ -19,44 +20,49 @@ class Context:
         self.temp_directory = self.build_directory / "tmp"
         self.cache = cache.Cache(self.build_directory / "cache")
 
-        self.verbose = True
-
-        self.files = {} # Mapping of file paths to nodes.File instances
+        self.files = weakref.WeakValueDictionary() # Mapping of file paths to nodes.File instances
         self.targets = {} # build script path -> [targets]
-        self.dirty = set()
+        self.dirty = weakref.WeakSet()
 
     def file_by_path(self, path):
-        path = pathlib.Path(path)
         if path not in self.files:
-            self.files[path] = nodes.SourceFile(path)
+            node = nodes.SourceFile(path)
+            node.targets = weakref.WeakSet()
+            self.files[path] = node
+
         return self.files[path]
+        self.dirty = weakref.WeakSet()
 
     def set_targets(self, build_script, targets):
+        for target in targets:
+            self._check_target_nodes(target)
         self.targets[build_script] = targets
 
-    def _mark_targets(self):
-        """ Mark the final targets in all registered nodes. """
-        for target in self.targets:
-            to_mark = collections.deque([target])
-            while to_mark:
-                node = to_mark.popleft()
+    def _check_target_nodes(self, target):
+        """ Mark the final targets in all dependency nodes,  """
+        to_visit = collections.deque([target])
+        while to_visit:
+            node = to_visit.popleft()
 
-                if target not in node.targets:
-                    node.targets.add(target)
-                    to_mark.extend(node.dependencies)
+            if isinstance(node, nodes.SourceFile):
+                assert len(node.dependencies) == 0
+                assert node is not target # TODO: Check this sooner with an understandable exception
+                if node.path in self.files:
+                    old_node = node
+                    node = self.files[node.path]
 
-    def prepare_build(self):
-        self._mark_targets()
+                    for revdep in node.reverse_dependencies:
+                        revdep.remove_dependency(old_node)
+                        revdep.add_dependency(node) # TODO: Node names
+                else:
+                    self.files[node.path] = node
 
-    def clean_build(self):
-        """ Build targets, don't assume any files exist. """
+            if node.targets is None:
+                node.targets = weakref.WeakSet()
 
-        with open("/tmp/nodes.dot", "w") as fp:
-            self.dump_graph(fp)
-
-        traversal.update(self, self.targets, self.files.values(), 1)
-
-        self._link_targets(self.targets)
+            if target not in node.targets:
+                node.targets.add(target)
+                to_visit.extend(node.dependencies)
 
     def save(self):
         self.cache.save()
@@ -97,14 +103,26 @@ class Context:
 
             output_file.symlink_to(symlink_path)
 
-    def run_command(self, command):
+    def run_command(self, command, timeout=600): #TODO: Somehow set default timeout
         command = [str(x) for x in command]
-        if self.verbose:
-            print(command)
+        #if self.verbose: TODO: Client has to run the build steps !!!
+            #print(command)
 
-        return subprocess.check_output(command,
-                                       stderr=sys.stderr,
-                                       universal_newlines=True)
+        with subprocess.Popen(command,
+                              stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE,
+                              universal_newlines=True) as p:
+            try:
+                stdout, stderr = p.communicate(timeout=timeout)
+            except:
+                p.kill()
+                p.wait()
+                raise
+
+            if p.returncode != 0:
+                raise Exception("Command failed", command, stdout, stderr, p.returncode)
+
+            return stdout
 
     def dump_graph(self, fp):
         to_process = list(self.targets)[:]

@@ -1,3 +1,5 @@
+from . import util
+
 import json
 import os
 import sys
@@ -49,11 +51,7 @@ class Service:
 class ServiceProxy:
     def __init__(self, cls, control_file, force_restart=False):
         self._cls = cls
-        control_file = pathlib.Path(control_file)
-        if not control_file.is_absolute():
-            self._control_file = pathlib.Path.cwd() / control_file
-        else:
-            self._control_file = control_file
+        self._control_file = util.make_absolute(pathlib.Path(control_file))
         self._socket = None
         self._rfile = None
         self._wfile = None
