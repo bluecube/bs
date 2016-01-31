@@ -125,22 +125,31 @@ class Context:
             return stdout
 
     def dump_graph(self, fp):
-        to_process = list(self.targets)[:]
-        nodes = set(to_process)
+        fp.write("digraph Nodes{\n")
 
-        fp.write("digraph Nodes{")
+        to_process = []
+        nodes = set()
+
+        for source_id, targets in self.targets.items():
+            fp.write('"{}"[shape="box"];\n'.format(source_id))
+            for target in targets:
+                fp.write('"{}" -> {};\n'.format(source_id, id(target)))
+                if target in nodes:
+                    continue
+                nodes.add(target)
+                to_process.append(target)
 
         while to_process:
             node = to_process.pop()
             for dep in node.dependencies:
-                fp.write("{} -> {};".format(id(dep), id(node)))
+                fp.write("{} -> {};\n".format(id(dep), id(node)))
                 if dep not in nodes:
                     nodes.add(dep)
                     to_process.append(dep)
 
         for node in nodes:
-            fp.write('{}[label="{}"];'.format(id(node), str(node)))
-        fp.write("}")
+            fp.write('{}[label="{}"];\n'.format(id(node), str(node)))
+        fp.write("}\n")
 
     @contextlib.contextmanager
     def tempfile(self, filename=""):
