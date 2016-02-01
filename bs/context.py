@@ -133,7 +133,7 @@ class Context:
         for source_id, targets in self.targets.items():
             fp.write('"{}"[shape="box"];\n'.format(source_id))
             for target in targets:
-                fp.write('"{}" -> {};\n'.format(source_id, id(target)))
+                fp.write('{} -> "{}";\n'.format(id(target), source_id))
                 if target in nodes:
                     continue
                 nodes.add(target)

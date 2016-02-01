@@ -6,6 +6,10 @@ import contextlib
 import logging
 
 def connect(build_directory, force_restart):
+    try:
+        build_directory.mkdir(parents=True)
+    except FileExistsError:
+        pass
     return service.ServiceProxy(Backend,
                                 build_directory / "backend_handle.json",
                                 force_restart)
@@ -47,5 +51,7 @@ class Backend(service.Service):
             selected_targets = (target for target
                                 in available_targes
                                 if target.name in targets)
+        with open("/tmp/nodes", "w") as fp:
+            self.context.dump_graph(fp)
         traversal.update(self.context, selected_targets, self.context.files.values())
         #TODO: return service.IteratorWrapper with events (building X, building X failed, ...)
