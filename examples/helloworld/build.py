@@ -43,12 +43,12 @@ class ConcatenateGenerator(bs.Builder):
         """ Hash any parameters of this builder """
         return self.hash_helper([self.function_name])
 
-with bs.Bs() as builder:
+def configure(context):
     # TODO: Add builder that generates header with date.
 
     greet_generator = ConcatenateGenerator("fun");
-    generated_h, generated_c = builder.apply(greet_generator,
-                                             builder.root.glob("*.txt"),
+    generated_h, generated_c = context.apply(greet_generator,
+                                             context.root.glob("*.txt"),
                                              ["generated.h", "generated.c"])
 
     compiler = bs.gcc.GccCompiler();
@@ -56,10 +56,13 @@ with bs.Bs() as builder:
     compiler.cflags.append("-I{generated_h.directory}")
 
     ofiles = []
-    for f in builder.root.glob("**/*.c"):
-        ofiles.extend(builder.apply(compiler, f))
-    ofiles.extend(builder.apply(compiler, generated_c))
+    for f in context.root.glob("**/*.c"):
+        ofiles.extend(context.apply(compiler, f))
+    ofiles.extend(context.apply(compiler, generated_c))
 
-    builder.add_target(builder.apply(compiler.create_associated_linker(),
+    context.add_target(context.apply(compiler.create_associated_linker(),
                        ofiles,
                        "hello_world"))
+
+if __name__ == "__main__":
+    bs.run(configure)

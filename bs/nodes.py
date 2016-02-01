@@ -1,12 +1,14 @@
 from . import util
+import weakref
+import pathlib
 
 class Node:
     """ Base class for node of the dependency graph. """
     def __init__(self):
         self.dependencies = set()
         self.named_dependencies = {}
-        self.reverse_dependencies = set()
-        self.targets = set()
+        self.reverse_dependencies = weakref.WeakSet() # Reconstructed from dependencies when pickling
+        self.targets = None
 
     def add_dependency(self, other, name=None):
         if other in self.dependencies:
@@ -63,6 +65,20 @@ class Node:
     def __format__(self, fmt):
         raise Exception("You shouldn't format nodes. Maybe `.path` or `.directory` is misising?")
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state["reverse_dependencies"]
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        if not hasattr(self, "reverse_dependencies"):
+            self.reverse_dependencies = weakref.WeakSet()
+        for node in self.dependencies:
+            if not hasattr(node, "reverse_dependencies"):
+                    node.reverse_dependencies = weakref.WeakSet()
+            node.reverse_dependencies.add(self)
+        self.targets = weakref.WeakSet()
 
 class Builder(Node):
     def build(self, context, input_paths, output_paths):
@@ -82,24 +98,15 @@ class Builder(Node):
 
 class Application(Node):
     """ A node that connects builder, inputs files and generated files. """
-    def __init__(self, context, builder, inputs, output_names):
+    def __init__(self, builder, inputs, output_names):
         super().__init__()
 
         self.builder = builder
         self.add_dependency(builder)
 
-        self.inputs = [self._wrap_input(context, x) for x in util.maybe_iterable(inputs)]
+        self.inputs = inputs
         for input in self.inputs:
             self.add_dependency(input)
-
-        output_count = builder.get_output_count(len(self.inputs))
-
-        if output_names is None:
-            output_names = [None] * output_count
-        else:
-            output_names = list(util.maybe_iterable(output_names))
-            if len(output_names) != output_count:
-                raise Exception("Wrong number of output names passed")
 
         self.outputs = [GeneratedFile(self, i, name)
                         for i, name
@@ -108,7 +115,6 @@ class Application(Node):
         self.timer = util.Timer()
 
         self.implicit_dependencies = None
-        self._find_cached_implicit_dependencies(context)
 
     def _find_cached_implicit_dependencies(self, context):
         partial_hash = self._get_hash(None)
@@ -132,12 +138,6 @@ class Application(Node):
         self._set_implicit_dependencies(ret)
         return True
 
-    def _wrap_input(self, context, input):
-        if isinstance(input, Node):
-            return input
-        else:
-            return context.file_by_path(input)
-
     def _set_implicit_dependencies(self, nodes):
         if self.implicit_dependencies is not None:
             for node in self.implicit_dependencies:
@@ -150,7 +150,7 @@ class Application(Node):
 
     def update(self, context):
         if self._find_cached_implicit_dependencies(context):
-            print("Have cached resutls", str(self))
+            #print("Have cached resutls", str(self))
             return
 
         #print("Building", str(self))
@@ -164,7 +164,16 @@ class Application(Node):
             if computed_deps is None:
                 computed_deps = []
 
-            self._set_implicit_dependencies([context.file_by_path(p) for p in computed_deps])
+            implicit_dependencies = []
+            for path in computed_deps:
+                path = pathlib.Path(path)
+                if not path.is_absolute():
+                    raise Exception("Builder must return implicit dependencies as absolute paths.")
+                node = context.file_by_path(path)
+                node.targets.union(self.targets)
+                implicit_dependencies.append(node)
+
+            self._set_implicit_dependencies(implicit_dependencies)
 
             context.cache.put(self.get_hash(), self._get_hash(None),
                               output_paths,
@@ -212,7 +221,7 @@ class File(Node):
 class SourceFile(File):
     def __init__(self, path):
         super().__init__()
-        self.path = path
+        self.path = util.make_absolute(path)
 
     def get_path(self, context):
         return self.path

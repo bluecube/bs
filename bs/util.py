@@ -2,6 +2,7 @@ import hashlib
 import mmap
 import contextlib
 import time
+import pathlib
 
 @contextlib.contextmanager
 def mmap_file(path):
@@ -62,3 +63,16 @@ class Timer:
                 self.time = elapsed
             else:
                 self.time = self._smoothing * self.time + (1 - self._smoothing) * elapsed
+
+def synchronized(f):
+    @functools.wraps(f)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return f(self, *args, **kwargs)
+    return wrapper
+
+def make_absolute(path):
+    if not path.is_absolute():
+        return pathlib.Path.cwd() / path
+    else:
+        return path

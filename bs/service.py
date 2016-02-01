@@ -1,3 +1,5 @@
+from . import util
+
 import json
 import os
 import sys
@@ -42,18 +44,14 @@ class Service:
 
     def _stop(self):
         """ Exit the main loop. Intended to be called by subclasses. """
-        logger.info("Service stop requested.")
+        #logger.info("Service stop requested.")
         threading.Thread(target=self._server.shutdown, daemon=True).start()
 
 
 class ServiceProxy:
     def __init__(self, cls, control_file, force_restart=False):
         self._cls = cls
-        control_file = pathlib.Path(control_file)
-        if not control_file.is_absolute():
-            self._control_file = pathlib.Path.cwd() / control_file
-        else:
-            self._control_file = control_file
+        self._control_file = util.make_absolute(pathlib.Path(control_file))
         self._socket = None
         self._rfile = None
         self._wfile = None
@@ -179,7 +177,6 @@ class _PickleRPCServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
             if self.instance._timeout is None or \
                time.time() <= self.instance._last_call_time + self.instance._timeout:
                 return
-            logger.info("Timed out waiting for RPC calls")
             raise TimeoutError("Timed out waiting for RPC calls ({} > {} + {})".format(
                                  time.time(),
                                  self.instance._last_call_time,
