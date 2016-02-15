@@ -1,5 +1,4 @@
 from . import util
-import weakref
 import pathlib
 
 class Node:
@@ -7,13 +6,16 @@ class Node:
     def __init__(self):
         self.dependencies = set()
         self.named_dependencies = {}
-        self.reverse_dependencies = weakref.WeakSet() # Reconstructed from dependencies when pickling
+
+        # The following is only used by the context -- gets set to a set after
+        # being transfered to backend.
+        self.reverse_dependencies = None
         self.targets = None
+        self.dirty = None
 
     def add_dependency(self, other, name=None):
         if other in self.dependencies:
             raise RuntimeError("Dependency already existed")
-        assert self not in other.reverse_dependencies
 
         if name is not None:
             if name in self.named_dependencies:
@@ -21,7 +23,6 @@ class Node:
             self.named_dependencies[name] = other
 
         self.dependencies.add(other)
-        other.reverse_dependencies.add(self)
 
     def remove_dependency(self, other):
         if other not in self.dependencies:
@@ -33,7 +34,6 @@ class Node:
                 break
 
         self.dependencies.remove(other)
-        other.reverse_dependencies.remove(self)
 
     def get_hash(self):
         raise NotImplementedError()
@@ -65,20 +65,6 @@ class Node:
     def __format__(self, fmt):
         raise Exception("You shouldn't format nodes. Maybe `.path` or `.directory` is misising?")
 
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        del state["reverse_dependencies"]
-        return state
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-        if not hasattr(self, "reverse_dependencies"):
-            self.reverse_dependencies = weakref.WeakSet()
-        for node in self.dependencies:
-            if not hasattr(node, "reverse_dependencies"):
-                    node.reverse_dependencies = weakref.WeakSet()
-            node.reverse_dependencies.add(self)
-        self.targets = weakref.WeakSet()
 
 class Builder(Node):
     def build(self, context, input_paths, output_paths):
@@ -95,6 +81,7 @@ class Builder(Node):
 
     def __str__(self):
         return self.__class__.__name__
+
 
 class Application(Node):
     """ A node that connects builder, inputs files and generated files. """

@@ -6,7 +6,6 @@ import logging
 
 def update(context, targets, dirty, job_count = 1):
     need_update = collections.Counter() # node: number of blockers
-    new_dirty = set()
 
     targets = set(targets)
 

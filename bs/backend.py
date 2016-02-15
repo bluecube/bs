@@ -3,7 +3,7 @@ from . import context
 from . import traversal
 
 import contextlib
-import logging
+import queue
 
 def connect(build_directory, force_restart):
     try:
@@ -13,6 +13,21 @@ def connect(build_directory, force_restart):
     return service.ServiceProxy(Backend,
                                 build_directory / "backend_handle.json",
                                 force_restart)
+
+class TaskLog:
+    """ A message passing queue """
+    def __init__(self, context):
+        self.context = context
+        self.queue = queue.Queue()
+
+    def log(self, fmt, *args, **kwargs):
+        self.queue.put(fmt.format(*args, **kwargs))
+
+    def __iter__(self):
+        item = self.queue.get()
+        while item is not None:
+            yield item
+            item = self.queue.get()
 
 class Backend(service.Service):
     _timeout = 20 * 60 # Shut down after 20 minutes of inactivity
@@ -44,14 +59,9 @@ class Backend(service.Service):
         self.context.set_targets(build_script, targets)
 
     def update(self, build_script, targets, output_directory):
-        available_targets = self.context.targets[build_script]
-        if targets is None:
-            selected_targets = available_targets
-        else:
-            selected_targets = (target for target
-                                in available_targes
-                                if target.name in targets)
         with open("/tmp/nodes", "w") as fp:
             self.context.dump_graph(fp)
-        traversal.update(self.context, selected_targets, self.context.files.values())
-        #TODO: return service.IteratorWrapper with events (building X, building X failed, ...)
+
+        self.context.update(q, selected_targets)
+
+        return service.IteratorWrapper(_iterate_queue(q))

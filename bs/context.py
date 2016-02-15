@@ -12,6 +12,13 @@ from . import nodes
 from . import cache
 from . import traversal
 
+class TargetData:
+    def __init__(self, node):
+        self.node = node
+
+        # Dirty nodes that are dirty, but don't have any dirty dependencies
+        self.start_nodes = weakref.WeakSet()
+
 class Context:
     """ State of the system.
     Holds the graph of dependencies. """
@@ -21,8 +28,7 @@ class Context:
         self.cache = cache.Cache(self.build_directory / "cache")
 
         self.files = weakref.WeakValueDictionary() # Mapping of file paths to nodes.File instances
-        self.targets = {} # build script path -> [targets]
-        self.dirty = weakref.WeakSet()
+        self.target_data = {} # build script path -> [TargetData]
 
     def file_by_path(self, path):
         if path not in self.files:
@@ -31,19 +37,33 @@ class Context:
             self.files[path] = node
 
         return self.files[path]
-        self.dirty = weakref.WeakSet()
 
     def set_targets(self, build_script, targets):
+        target_data = []
         for target in targets:
-            self._check_target_nodes(target)
-        self.targets[build_script] = targets
+            self._process_nodes(target)
+            target_data.append(TargetData(target))
+        self.target_data[build_script] = target_data
 
-    def _check_target_nodes(self, target):
+#    def set_node_dirty(self, node, dirty):
+#        assert dirty != node.dirty
+#
+#        node.dirty = dirty
+#
+#        if dirty and all(not dep.dirty for dep in node.dependencies):
+#            for target in node.targets:
+#                self.target_data[target].start_nodes.add(node)
+#        if not dirty 
+#                
+#
+
+    def _process_nodes(self, target):
         """ Mark the final targets in all dependency nodes,  """
         to_visit = collections.deque([target])
         while to_visit:
             node = to_visit.popleft()
 
+            # TODO: Maybe merge even non-file nodes
             if isinstance(node, nodes.SourceFile):
                 assert len(node.dependencies) == 0
                 assert node is not target # TODO: Check this sooner with an understandable exception
@@ -63,6 +83,15 @@ class Context:
             if target not in node.targets:
                 node.targets.add(target)
                 to_visit.extend(node.dependencies)
+
+            if node.reverse_dependencies is None:
+                node.reverse_dependencies = weakref.WeakSet()
+
+            # TODO: I don't like this part:
+            for dep in self.dependencies:
+                if dep.reverse_dependencies is None:
+                    dep.reverse_dependencies = weakref.WeakSet()
+                dep.reverse_dependencies.add(node)
 
     def save(self):
         self.cache.save()
@@ -125,19 +154,21 @@ class Context:
             return stdout
 
     def dump_graph(self, fp):
+        """ Write the graph in graphviz format """
         fp.write("digraph Nodes{\n")
 
         to_process = []
         nodes = set()
 
-        for source_id, targets in self.targets.items():
+        for source_id, target_data in self.target_data.items():
             fp.write('"{}"[shape="box"];\n'.format(source_id))
-            for target in targets:
-                fp.write('{} -> "{}";\n'.format(id(target), source_id))
-                if target in nodes:
+            for target_data_item in target_data:
+                node = target_data_item.node
+                fp.write('{} -> "{}";\n'.format(id(node), source_id))
+                if node in nodes:
                     continue
-                nodes.add(target)
-                to_process.append(target)
+                nodes.add(node)
+                to_process.append(node)
 
         while to_process:
             node = to_process.pop()
@@ -195,3 +226,14 @@ class Context:
             yield path
         finally:
             shutil.rmtree(str(path))
+
+    def update(self, task_log, target_names):
+        available_targets = self.targets[build_script]
+        if target_names is None:
+            selected_targets = available_targets
+        else:
+            selected_targets = (target for target
+                                in available_targes
+                                if target.name in targets)
+
+        traversal.update(self, selected_targets, self.files.values())
