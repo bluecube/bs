@@ -13,12 +13,23 @@ class Cache:
 
     def __init__(self, directory, size_limit = 1000000000):
         self.directory = directory
-        self.size_limit = float("inf") # Size limit is infinite for loading
+        self.size_limit = size_limit
+        self.clear(False)
+
+    def __enter__(self):
+        # Size limit is infinite for loading, we will restore it afterwards.
+        size_limit = self.size_limit
+        self.size_limit = float("inf")
+
         if not self._load():
             self.clear()
         self.size_limit = size_limit
+        return self
 
-    def clear(self):
+    def __exit__(self, *exc_info):
+        self.save()
+
+    def clear(self, delete_directory = True):
         self.size_used = 0
         self._data = collections.OrderedDict()
             # MRU order
@@ -29,10 +40,11 @@ class Cache:
             # Key: Partial hash
             # Value: list of full hashes
 
-        try:
-            shutil.rmtree(str(self.directory))
-        except FileNotFoundError:
-            pass
+        if delete_directory:
+            try:
+                shutil.rmtree(str(self.directory))
+            except FileNotFoundError:
+                pass
 
     def put(self, final_hash, partial_hash, paths, implicit_dependencies):
         """ Add files to cache.

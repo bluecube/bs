@@ -13,8 +13,10 @@ def cache_fixture():
     c = cache.Cache(pathlib.Path(directory), size_limit = 10)
 
     try:
-        yield c
-        assert c.verify_state()
+        with c:
+            assert c.verify_state()
+            yield c
+            assert c.verify_state()
     finally:
         try:
             shutil.rmtree(str(directory))
@@ -121,55 +123,51 @@ def dropping_test():
 
 def too_large_test():
     """ Test cache item larger than cache itself. """
-    with cache_fixture() as c:
-        with make_files(20) as files:
-            with assert_raises(Exception):
+    with cache_fixture() as c, \
+          make_files(20) as files, \
+          assert_raises(Exception):
                 c.put(b"final", b"partial", files, [])
 
 def save_load_test():
     with cache_fixture() as c:
         create_data(c) # Reuse the previous test data
-
         c.save() # At this point we forget that c existed and only reuse its directory
 
-        d = cache.Cache(c.directory, 20) # Larger cache
-        check_data(d)
+        with cache.Cache(c.directory, 20) as d: # Larger cache
+            check_data(d)
+            # reuse directory again
 
-        d.save() # Again
+        with cache.Cache(c.directory, 8) as e: # Smaller than the original -- remove something after next insert
+            check_data(e)
+            e.put(b"final-2-c", b"partial-2", [], [("file1", b"version3"), ("file2", b"version1")])
 
-        e = cache.Cache(c.directory, 8) # Smaller than the original -- remove something after next insert
-        check_data(e)
-        e.put(b"final-2-c", b"partial-2", [], [("file1", b"version3"), ("file2", b"version1")])
-
-        eq_(e.get_candidate_implicit_dependencies(b"partial-1"),
-            [[("file1", b"version2"), ("file2", b"version1")],
-             [("file1", b"version2"), ("file2", b"version2")]])
-        eq_(e.get_candidate_implicit_dependencies(b"partial-2"),
-            [[("file1", b"version1"), ("file2", b"version1")],
-             [("file1", b"version2"), ("file2", b"version1")],
-             [("file1", b"version3"), ("file2", b"version1")]])
+            eq_(e.get_candidate_implicit_dependencies(b"partial-1"),
+                [[("file1", b"version2"), ("file2", b"version1")],
+                 [("file1", b"version2"), ("file2", b"version2")]])
+            eq_(e.get_candidate_implicit_dependencies(b"partial-2"),
+                [[("file1", b"version1"), ("file2", b"version1")],
+                 [("file1", b"version2"), ("file2", b"version1")],
+                 [("file1", b"version3"), ("file2", b"version1")]])
 
         c.clear() # clear c manually -- it's internal state is corrupted by the caches created over it
 
-        c.save() # This will do nothing
+        # c will be implicitly saved, this will do nothing
 
 def load_error_test():
     """ Test loading damaged save file. """
     with cache_fixture() as c:
         create_data(c) # Reuse the previous test data
-
-        c.save() # At this point we forget that c existed and only reuse its directory
+        # At this point we forget that c existed and only reuse its directory
 
         # damage the save
         with (c.directory / c._save_filename).open("wb") as fp:
             fp.write(b"damaged!")
 
-        d = cache.Cache(c.directory, 10)
+        with cache.Cache(c.directory, 10) as d:
+            eq_(d.get_candidate_implicit_dependencies(b"partial-1"), [])
+            eq_(d.get_candidate_implicit_dependencies(b"partial-2"), [])
 
-        eq_(d.get_candidate_implicit_dependencies(b"partial-1"), [])
-        eq_(d.get_candidate_implicit_dependencies(b"partial-2"), [])
-
-        c.clear() # clear c manually -- it's internal state is corrupted by the caches created over it
+        c.clear() # clear c manually -- its internal state is corrupted by the caches created over it
 
 def verify_state_test():
     """ Tests all failure states of state verification. """
