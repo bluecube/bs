@@ -72,6 +72,6 @@ def run(configure_callback,
         if backend.need_run_config(caller_filename):
             context = UserContext(root_directory)
             configure_callback(context)
-            backend.upload_targets(caller_filename, context._targets)
+            backend.set_targets(caller_filename, context._targets)
 
         backend.update(caller_filename, None, output_directory) # TODO: Always updating all targets
