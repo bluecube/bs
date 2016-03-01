@@ -12,8 +12,20 @@ import socketserver
 import logging
 import traceback
 import pathlib
+import contextlib
 
 logger = logging.getLogger(__name__)
+
+class DefaultConnectionClass:
+    def __init__(self, instance, address):
+        self.address = address
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self, *exc_info):
+        pass
+
 
 class Service:
     """ Base class for a service that runs as a background process and makes all
@@ -25,11 +37,21 @@ class Service:
     Instance variables:
     _timeout -- Must be set by subclass. After this many seconds without any request
                 the server will raise TimeoutError and stop. None means no limit.
+    _connection_class -- May be set by subclass.
+                         Class that gets instantiated on every connection.
+                         It gets two parameters -- instance of the Service and a tuple
+                         (address, port) of the client. The connection object is
+                         entered and exited as context manager when the connection
+                         starts and ends.
+                         By default this is DefaultConnectionClass.
+    _clonnection -- Instance of _connection_class that corresponds to the client
+                    making the current call.
     _last_call_time -- Time of last RPC call.
     _server -- SocketServer subclass that handles the connection
     _lock -- Lock that protects all method calls.
-    _client_address -- (ip, port) tuple of client that calls the current function
     """
+
+    _connection_class = DefaultConnectionClass
 
     def __init__(self, control_file):
         """ Initialize the server of this service.
@@ -82,6 +104,9 @@ class ServiceProxy:
                 self._try_connect(1.5)
                 if self._socket is None:
                     raise Exception("Failed to start the service")
+            logger.info("Connected to service %s with control file %s",
+                        self._cls.__name__,
+                        self._control_file)
 
             return self
         except:
@@ -184,32 +209,62 @@ class _PickleRPCServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 class _PickleRPCRequestHandler(socketserver.StreamRequestHandler):
     def handle(self):
+        instance = self.server.instance
         iterators = {}
-        while True:
-            try:
-                func_name, args, kwargs = pickle.load(self.rfile)
+        connection = None
 
-                with self.server.instance._lock:
-                    self.server.instance._client_address = self.client_address
-                    if func_name in iterators:
-                        assert len(args) == 0
-                        assert len(kwargs) == 0
-                        result = next(iterators[func_name])
-                    else:
-                        func = getattr(self.server.instance, func_name)
-                        result = func(*args, **kwargs)
+        with contextlib.ExitStack() as stack:
+            while True:
+                try:
+                    func_name, args, kwargs = pickle.load(self.rfile)
 
-                    if isinstance(result, IteratorWrapper):
-                        iterator_id = "!" + str(id(result.it))
-                        iterators[iterator_id] = result.it # TODO: Now we are memory leaking exhausted iterators
-                        result.it = iterator_id
-                    self.server.instance._last_call_time = time.time()
-            except:
-                ex_type, ex_value, ex_tb = sys.exc_info()
-                pickle.dump((None, (ex_type, ex_value, traceback.extract_tb(ex_tb))), self.wfile)
-                # TODO: Pass traceback for exceptions as well
+                    with instance._lock:
+                        if connection is None:
+                            # Connection is initialised here so that we can pass
+                            # its exceptions to the caller.
+                            #try:
+                            connection = instance._connection_class(instance, self.client_address)
+                            #except Exception as e:
+                            #    raise Exception(repr(e)) #TODO: Why are these not caught directly?
+
+                            if connection is None:
+                                raise ValueError("_connection_class constructor returned None!")
+                            stack.enter_context(connection)
+
+                        instance._last_call_time = time.time()
+                        instance._connection = connection
+
+                        if func_name in iterators:
+                            assert len(args) == 0
+                            assert len(kwargs) == 0
+                            result = next(iterators[func_name])
+                        else:
+                            func = getattr(instance, func_name)
+                            result = func(*args, **kwargs)
+
+                        if isinstance(result, IteratorWrapper):
+                            iterator_id = "!" + str(id(result.it))
+                            iterators[iterator_id] = result.it # TODO: Now we are memory leaking exhausted iterators
+                            result.it = iterator_id
+
+                    data = pickle.dumps((result, None))
+                    self.wfile.write(data)
+                except:
+                    self.send_exception()
+
+    def send_exception(self, level = 1, max_level = 3):
+        try:
+            ex_type, ex_value, ex_tb = sys.exc_info()
+            data = pickle.dumps((None, (ex_type, ex_value, traceback.extract_tb(ex_tb))))
+                # TODO: Better way to pass traceback
+                # https://mail.python.org/pipermail/python-3000/2007-April/006604.html ?
+            self.wfile.write(data)
+        except:
+            if level < max_level:
+                self.send_exception(level + 1, max_level)
             else:
-                pickle.dump((result, None), self.wfile)
+                pass # Nothing we can do :-(
+
 
 def _run(cls, control_file):
     """ The actual code run by the service.
