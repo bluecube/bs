@@ -115,6 +115,15 @@ def chdir(d):
     finally:
         os.chdir(original)
 
+@nottest
+def wait_until(max_time, condition):
+    n = 10
+    for i in range(n):
+        time.sleep(max_time/n)
+        if condition:
+            break
+    assert condition
+
 def basic_test():
     with contextlib.ExitStack() as stack:
         tmp = pathlib.Path(stack.enter_context(tempfile.TemporaryDirectory()))
@@ -184,8 +193,7 @@ def another_process_test():
         p2.start()
         p2.join()
 
-        time.sleep(0.5)
-        assert not control_file.exists()
+        wait_until(2, lambda: not control_file.exists())
 
 def timeout_test():
     with contextlib.ExitStack() as stack:
@@ -280,8 +288,7 @@ def client_class_test():
                 # -- during s2.get_connections(). s1 will then see it without problems.
                 eq_(len(s2.get_connections()), 2)
                 eq_(len(s1.get_connections()), 2)
-            time.sleep(0.5) # Give s2 time to close the connection
-            eq_(len(s1.get_connections()), 1)
+            wait_until(2, lambda: len(s1.get_connections()) == 1)
 
 def invalid_client_class_test():
     with contextlib.ExitStack() as stack:
