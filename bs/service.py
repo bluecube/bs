@@ -176,6 +176,9 @@ class ServiceProxy:
 class IteratorWrapper:
     """ Class that marks wrapped iterators. These are iterated in the service and
     only their results are transfered. """
+    # TODO: Refactor this to support any objects, not just iterators.
+    # Random idea: The whole proxy is just a subclass of this wrapper and it wraps
+    # the service object instance
     def __init__(self, it):
         self.it = iter(it)
         self._proxy = None

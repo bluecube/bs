@@ -9,6 +9,7 @@ class Node:
 
         # The following is only used by the context -- gets set to a set after
         # being transfered to backend.
+        #TODO: Maybe move these values somewhere else?
         self.reverse_dependencies = None
         self.targets = None
         self.dirty = None

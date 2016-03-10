@@ -1,9 +1,19 @@
 from . import service
 from . import context
 from . import traversal
+from . import cache
+from . import nodes
 
+import tempfile
+import collections
+import pathlib
+import shutil
+import os
+import subprocess
+import sys
+import weakref
 import contextlib
-import queue
+import threading
 
 def connect(build_directory, force_restart):
     try:
@@ -14,27 +24,66 @@ def connect(build_directory, force_restart):
                                 build_directory / "backend_handle.json",
                                 force_restart)
 
-class TaskLog:
-    """ A message passing queue """
-    def __init__(self, context):
-        self.context = context
-        self.queue = queue.Queue()
-
-    def log(self, fmt, *args, **kwargs):
-        self.queue.put(fmt.format(*args, **kwargs))
-
-    def __iter__(self):
-        item = self.queue.get()
-        while item is not None:
-            yield item
-            item = self.queue.get()
-
-class TargetData:
-    def __init__(self, node):
-        self.node = node
+class _TargetData:
+    def __init__(self, backend, target_node):
+        self.node = target_node
 
         # Dirty nodes that are dirty, but don't have any dirty dependencies
         self.start_nodes = weakref.WeakSet()
+
+        self._process_nodes(backend, target_node)
+
+    def _process_nodes(self, backend, target):
+        """ Visit all dependencies of the targets and prepare them. """
+        to_visit = collections.deque([target])
+        while to_visit:
+            node = to_visit.popleft()
+
+            # TODO: Maybe merge even non-file nodes
+            if isinstance(node, nodes.SourceFile):
+                assert len(node.dependencies) == 0
+                assert node is not target # TODO: Check this sooner with an understandable exception
+                if node.path in backend.files:
+                    old_node = node
+                    node = backend.files[node.path]
+
+                    for revdep in node.reverse_dependencies:
+                        revdep.remove_dependency(old_node)
+                        revdep.add_dependency(node) # TODO: Node names
+
+                    if old_node is target:
+                        # Edge case
+                        # The target node will always be visited first, so there
+                        # shouldn't be a problem with changing the node reference
+                        # while it's already stored in other nodes.
+                        # TODO: Write a test for this.
+                        target = node
+                else:
+                    backend.files[node.path] = node
+
+            if node.targets is None:
+                node.targets = weakref.WeakSet()
+
+            if target not in node.targets:
+                node.targets.add(target)
+                to_visit.extend(node.dependencies)
+
+            if node.reverse_dependencies is None:
+                node.reverse_dependencies = weakref.WeakSet()
+
+            # TODO: I don't like this part:
+            for dep in node.dependencies:
+                if dep.reverse_dependencies is None:
+                    dep.reverse_dependencies = weakref.WeakSet()
+                dep.reverse_dependencies.add(node)
+
+            # All nodes are initially dirty
+            node.dirty = True
+            if not node.dependencies:
+                self.start_nodes.add(node)
+
+        return target
+
 
 class Backend(service.Service):
     """ State of the build system itself. Holds the graph of dependencies.
@@ -46,12 +95,12 @@ class Backend(service.Service):
         enter_context = self.stack.enter_context
 
         try:
-            self.build_directory = build_directory
+            self.build_directory = control_file.parent
             self.temp_directory = self.build_directory / "tmp"
-            self.cache = self.stack.enter_context(cache.Cache(self.build_directory / "cache"))
+            self.cache = cache.Cache(self.build_directory / "cache")
 
             self.files = weakref.WeakValueDictionary() # Mapping of file paths to nodes.File instances
-            self.target_data = {} # build script path -> [TargetData]
+            self.target_data = {} # build script path -> [_TargetData]
 
             #self.monitor = monitor.Monitor()
         except:
@@ -60,8 +109,8 @@ class Backend(service.Service):
 
     def __enter__(self):
         try:
+            self.stack.enter_context(self.cache)
             #self.stack.enter_context(self.monitor)
-            self.stack.callback(self.context.save)
         except:
             self.stack.close()
             raise
@@ -77,14 +126,13 @@ class Backend(service.Service):
     def set_targets(self, build_script, targets):
         #TODO: Targets uploaded here should have limited life time
         # else we would leak targets from unused build scripts
-        target_data = []
-        for target in targets:
-            self._process_nodes(target)
-            target_data.append(TargetData(target))
-        self.target_data[build_script] = target_data
+        self.target_data[build_script] = [_TargetData(self, target) for target in targets]
 
-    def update(self, build_script, targets, output_directory):
-        available_targets = self.targets[build_script]
+    def update(self, build_script, target_names, output_directory):
+        """ Update targets.
+        This function runs the job in a thread and returns an iterator with progress
+        messages. """
+        available_targets = self.target_data[build_script]
         if target_names is None:
             selected_targets = available_targets
         else:
@@ -95,11 +143,40 @@ class Backend(service.Service):
         with open("/tmp/nodes", "w") as fp:
             self._dump_graph(fp)
 
-        traversal.update(self, selected_targets, self.files.values())
+        c = context.Context(self)
 
-        return service.IteratorWrapper(_iterate_queue(q))
+        thread = threading.Thread(target=self._update_internal,
+                                  args=(c, selected_targets, output_directory),
+                                  daemon=True)
+        thread.start()
+        # TODO: The thread should be stopped when the client disconnects
+        # TODO: Or maybe we shouldn't have a separate thread here?
+        # It could all be done in the regular workers themselves.
+        # Outputs could be linked when update is processed on a node that is a target.
+
+        return service.IteratorWrapper(c.iterate_log_messages())
+
+    def _update_internal(self, c, selected_target_data, output_directory):
+        """ Launched in anothre thread, does the actual work. """
+        try:
+            targets = set()
+            initial_dirty = set()
+            for target_data in selected_target_data:
+                targets.add(target_data.node)
+                initial_dirty.update(target_data.start_nodes)
+
+                c.log(str(target_data))
+
+            #traversal.update(self, targets, self.files.values())
+
+            #self._link_outputs(targets, output_directory)
+        except Exception as e:
+            c.exception(e)
+        else:
+            c.finish()
 
     def _file_by_path(self, path):
+        #TODO: Is this one needed?
         if path not in self.files:
             node = nodes.SourceFile(path)
             node.targets = weakref.WeakSet()
@@ -118,51 +195,15 @@ class Backend(service.Service):
 #        if not dirty 
 #
 
-    def _process_nodes(self, target):
-        """ Mark the final targets in all dependency nodes,  """
-        to_visit = collections.deque([target])
-        while to_visit:
-            node = to_visit.popleft()
-
-            # TODO: Maybe merge even non-file nodes
-            if isinstance(node, nodes.SourceFile):
-                assert len(node.dependencies) == 0
-                assert node is not target # TODO: Check this sooner with an understandable exception
-                if node.path in self.files:
-                    old_node = node
-                    node = self.files[node.path]
-
-                    for revdep in node.reverse_dependencies:
-                        revdep.remove_dependency(old_node)
-                        revdep.add_dependency(node) # TODO: Node names
-                else:
-                    self.files[node.path] = node
-
-            if node.targets is None:
-                node.targets = weakref.WeakSet()
-
-            if target not in node.targets:
-                node.targets.add(target)
-                to_visit.extend(node.dependencies)
-
-            if node.reverse_dependencies is None:
-                node.reverse_dependencies = weakref.WeakSet()
-
-            # TODO: I don't like this part:
-            for dep in self.dependencies:
-                if dep.reverse_dependencies is None:
-                    dep.reverse_dependencies = weakref.WeakSet()
-                dep.reverse_dependencies.add(node)
-
-    def _link_targets(self, targets, output_directory):
+    def _link_outputs(self, targets, output_directory):
         """ Link the specified target files to the output directory. """
         try:
-            self.output_directory.mkdir(parents=True)
+            output_directory.mkdir(parents=True)
         except FileExistsError:
             pass
 
         try:
-            relative_output_directory = self.output_directory.relative_to(self.build_directory)
+            relative_output_directory = output_directory.relative_to(self.build_directory)
         except ValueError:
             relative_build_directory = None
         else:

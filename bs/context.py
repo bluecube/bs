@@ -1,20 +1,46 @@
-import contextlib
-import tempfile
-import collections
-import pathlib
-import shutil
-import os
-import subprocess
-import sys
-import weakref
-
 from . import nodes
 from . import cache
 from . import traversal
 
+import queue
+import contextlib
+
 class Context:
-    """ State of the system.
-    Holds the graph of dependencies. """
+    """ State of single update.
+    Used by the nodes' update methods as an interface to backend and
+    to give reports trough the shared queue. """
+
+    def __init__(self, backend):
+        self.stop_flag = False
+
+        self._backend = backend
+        self._queue = queue.Queue()
+        self._finished = False
+        self._exception = None
+
+    def log(self, fmt, *args, **kwargs):\
+        #TODO: Convert this to use logging
+        self._queue.put(fmt.format(*args, **kwargs))
+
+    def finish(self):
+        self._finished = True
+
+    def exception(self, e):
+        self._finished = True
+        self._exception = e
+
+    def iterate_log_messages(self):
+        """ Go through the logged messages.
+        This is intended to be called from a different thread than writing the messages.
+        Iteration stops if the future associated with this context is not running
+        and will raise any exceptions raised inside the future. """
+
+        while not (self._finished and self._queue.empty()):
+            item = self._queue.get()
+            yield item
+
+        if self._exception:
+            raise self._exception
 
     def run_command(self, command, timeout=600): #TODO: Somehow set default timeout
         command = [str(x) for x in command]
