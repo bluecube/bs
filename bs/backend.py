@@ -13,7 +13,7 @@ import subprocess
 import sys
 import weakref
 import contextlib
-import threading
+import concurrent.futures
 
 def connect(build_directory, force_restart):
     try:
@@ -24,25 +24,59 @@ def connect(build_directory, force_restart):
                                 build_directory / "backend_handle.json",
                                 force_restart)
 
+def _node_job(node, context):
+    """ Launched in another thread, updates a single node and submits jobs for
+    other nodes. """
+    try:
+        context.log(str(node))
+        if context.stop_flag:
+            return
+
+        with context.backend._lock:
+            need_update = not node.dirty
+            unlocked_nodes = self._set_node_clean(node) #!!!
+
+        if need_update:
+            node.update(context)
+
+        if context.stop_flag:
+            return
+
+        with context.backend._lock:
+            for target in node.targets & c.targets:
+                target.submit_waiting_jobs(context)
+                # TODO: Avoid submiting the same node twice
+
+        if node in c.targets:
+            c.processed_targets.add(node)
+            self._link_output_file(node, output_directory)
+    except Exception as e:
+        c.exception(e)
+
 class _TargetData:
+    """ Represents target. """
     def __init__(self, backend, target_node):
-        self.node = target_node
-
         # Dirty nodes that are dirty, but don't have any dirty dependencies
-        self.start_nodes = weakref.WeakSet()
+        self.waiting_nodes = weakref.WeakSet()
+        self.node = self._process_nodes(backend, target_node)
 
-        self._process_nodes(backend, target_node)
+    def submit_waiting_jobs(self, context):
+        """ Submit update jobs for all nodes depended on by the target
+            that are currently waiting """
+        context.log("Submiting {} jobs", len(self.waiting_nodes))
+        for node in self.waiting_nodes:
+            context.backend.executor.submit(_node_job(node, context))
 
-    def _process_nodes(self, backend, target):
+    def _process_nodes(self, backend, target_node):
         """ Visit all dependencies of the targets and prepare them. """
-        to_visit = collections.deque([target])
+        to_visit = collections.deque([target_node])
         while to_visit:
             node = to_visit.popleft()
 
             # TODO: Maybe merge even non-file nodes
             if isinstance(node, nodes.SourceFile):
                 assert len(node.dependencies) == 0
-                assert node is not target # TODO: Check this sooner with an understandable exception
+                assert node is not target_node # TODO: Check this sooner with an understandable exception
                 if node.path in backend.files:
                     old_node = node
                     node = backend.files[node.path]
@@ -51,21 +85,21 @@ class _TargetData:
                         revdep.remove_dependency(old_node)
                         revdep.add_dependency(node) # TODO: Node names
 
-                    if old_node is target:
+                    if old_node is target_node:
                         # Edge case
                         # The target node will always be visited first, so there
                         # shouldn't be a problem with changing the node reference
                         # while it's already stored in other nodes.
                         # TODO: Write a test for this.
-                        target = node
+                        target_node = node
                 else:
                     backend.files[node.path] = node
 
             if node.targets is None:
                 node.targets = weakref.WeakSet()
 
-            if target not in node.targets:
-                node.targets.add(target)
+            if self not in node.targets:
+                node.targets.add(self)
                 to_visit.extend(node.dependencies)
 
             if node.reverse_dependencies is None:
@@ -80,9 +114,9 @@ class _TargetData:
             # All nodes are initially dirty
             node.dirty = True
             if not node.dependencies:
-                self.start_nodes.add(node)
+                self.waiting_nodes.add(node)
 
-        return target
+        return target_node
 
 
 class Backend(service.Service):
@@ -102,6 +136,8 @@ class Backend(service.Service):
             self.files = weakref.WeakValueDictionary() # Mapping of file paths to nodes.File instances
             self.target_data = {} # build script path -> [_TargetData]
 
+            self.executor = concurrent.futures.ThreadPoolExecutor(4) #TODO: Configurable number of workers
+
             #self.monitor = monitor.Monitor()
         except:
             self.stack.close()
@@ -110,6 +146,7 @@ class Backend(service.Service):
     def __enter__(self):
         try:
             self.stack.enter_context(self.cache)
+            self.stack.enter_context(self.executor)
             #self.stack.enter_context(self.monitor)
         except:
             self.stack.close()
@@ -129,9 +166,8 @@ class Backend(service.Service):
         self.target_data[build_script] = [_TargetData(self, target) for target in targets]
 
     def update(self, build_script, target_names, output_directory):
-        """ Update targets.
-        This function runs the job in a thread and returns an iterator with progress
-        messages. """
+        """ Update targets. Returns an iterator with progress messages. """
+
         available_targets = self.target_data[build_script]
         if target_names is None:
             selected_targets = available_targets
@@ -143,37 +179,15 @@ class Backend(service.Service):
         with open("/tmp/nodes", "w") as fp:
             self._dump_graph(fp)
 
-        c = context.Context(self)
+        c = context.Context(self, selected_targets, output_directory)
+        # TODO: Stop context when connection from client is closed
 
-        thread = threading.Thread(target=self._update_internal,
-                                  args=(c, selected_targets, output_directory),
-                                  daemon=True)
-        thread.start()
-        # TODO: The thread should be stopped when the client disconnects
-        # TODO: Or maybe we shouldn't have a separate thread here?
-        # It could all be done in the regular workers themselves.
-        # Outputs could be linked when update is processed on a node that is a target.
+        for target in selected_targets:
+            target.submit_waiting_jobs(c)
+
+        c.log("X")
 
         return service.IteratorWrapper(c.iterate_log_messages())
-
-    def _update_internal(self, c, selected_target_data, output_directory):
-        """ Launched in anothre thread, does the actual work. """
-        try:
-            targets = set()
-            initial_dirty = set()
-            for target_data in selected_target_data:
-                targets.add(target_data.node)
-                initial_dirty.update(target_data.start_nodes)
-
-                c.log(str(target_data))
-
-            #traversal.update(self, targets, self.files.values())
-
-            #self._link_outputs(targets, output_directory)
-        except Exception as e:
-            c.exception(e)
-        else:
-            c.finish()
 
     def _file_by_path(self, path):
         #TODO: Is this one needed?
@@ -191,9 +205,8 @@ class Backend(service.Service):
 #
 #        if dirty and all(not dep.dirty for dep in node.dependencies):
 #            for target in node.targets:
-#                self.target_data[target].start_nodes.add(node)
+#                self.target_data[target].waiting_nodes.add(node)
 #        if not dirty 
-#
 
     def _link_outputs(self, targets, output_directory):
         """ Link the specified target files to the output directory. """

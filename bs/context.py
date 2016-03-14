@@ -10,13 +10,14 @@ class Context:
     Used by the nodes' update methods as an interface to backend and
     to give reports trough the shared queue. """
 
-    def __init__(self, backend):
+    def __init__(self, backend, targets, output_directory):
         self.stop_flag = False
 
-        self._backend = backend
+        self.backend = backend
         self._queue = queue.Queue()
         self._finished = False
         self._exception = None
+        self._targets = targets
 
     def log(self, fmt, *args, **kwargs):\
         #TODO: Convert this to use logging
@@ -27,6 +28,7 @@ class Context:
 
     def exception(self, e):
         self._finished = True
+        self.stop_flag = True
         self._exception = e
 
     def iterate_log_messages(self):

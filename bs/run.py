@@ -74,11 +74,13 @@ def run(configure_callback,
             configure_callback(context)
             backend.set_targets(caller_filename, context._targets)
 
+        print("before update")
         messages = backend.update(caller_filename, None, output_directory) # TODO: Always updating all targets
+        print("after update")
 
         try:
             for message in messages:
-                print(message)
+                print("Message from backend:", message)
         except KeyboardInterrupt:
             print("Interrupted")
             #TODO: First signal the other side to stop, then exit.

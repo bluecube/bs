@@ -67,6 +67,8 @@ class Service:
     def _stop(self):
         """ Exit the main loop. Intended to be called by subclasses. """
         #logger.info("Service stop requested.")
+        with open("/tmp/x", "w") as fp:
+            fp.write("ASDF\n")
         threading.Thread(target=self._server.shutdown, daemon=True).start()
 
 
