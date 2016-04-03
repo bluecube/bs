@@ -17,7 +17,7 @@ class Context:
         self._queue = queue.Queue()
         self._finished = False
         self._exception = None
-        self._targets = targets
+        self.targets = targets
 
     def log(self, fmt, *args, **kwargs):\
         #TODO: Convert this to use logging

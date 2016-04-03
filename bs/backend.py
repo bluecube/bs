@@ -34,7 +34,7 @@ def _node_job(node, context):
 
         with context.backend._lock:
             need_update = not node.dirty
-            unlocked_nodes = self._set_node_clean(node) #!!!
+            #unlocked_nodes = self._set_node_clean(node) #!!!
 
         if need_update:
             node.update(context)
@@ -43,15 +43,15 @@ def _node_job(node, context):
             return
 
         with context.backend._lock:
-            for target in node.targets & c.targets:
+            for target in node.targets & context.targets:
                 target.submit_waiting_jobs(context)
                 # TODO: Avoid submiting the same node twice
 
-        if node in c.targets:
-            c.processed_targets.add(node)
+        if node in context.targets:
+            context.processed_targets.add(node)
             self._link_output_file(node, output_directory)
     except Exception as e:
-        c.exception(e)
+        context.exception(e)
 
 class _TargetData:
     """ Represents target. """
@@ -65,7 +65,7 @@ class _TargetData:
             that are currently waiting """
         context.log("Submiting {} jobs", len(self.waiting_nodes))
         for node in self.waiting_nodes:
-            context.backend.executor.submit(_node_job(node, context))
+            context.backend.executor.submit(_node_job, node, context)
 
     def _process_nodes(self, backend, target_node):
         """ Visit all dependencies of the targets and prepare them. """
@@ -176,8 +176,8 @@ class Backend(service.Service):
                                 in available_targes
                                 if target.name in targets)
 
-        with open("/tmp/nodes", "w") as fp:
-            self._dump_graph(fp)
+        #with open("/tmp/nodes", "w") as fp:
+        #    self._dump_graph(fp)
 
         c = context.Context(self, selected_targets, output_directory)
         # TODO: Stop context when connection from client is closed
@@ -185,6 +185,7 @@ class Backend(service.Service):
         for target in selected_targets:
             target.submit_waiting_jobs(c)
 
+        c.log("Submitted initial targets")
         c.log("X")
 
         return service.IteratorWrapper(c.iterate_log_messages())
